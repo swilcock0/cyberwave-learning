@@ -1,12 +1,18 @@
 FROM ros:humble-ros-core
 
-# Install CycloneDDS middleware
-RUN apt-get update && apt-get install -y \
-    ros-humble-rmw-cyclonedds-cpp \
-    && rm -rf /var/lib/apt/lists/*
+# No extra DDS explicitly installed - uses default FastRTPS (FastDDS)
+ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+ENV FASTRTPS_DEFAULT_PROFILES_FILE=/fastdds_udp.xml
 
-# Set the default middleware to CycloneDDS
-ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+# Entrypoint: source ROS, start the ros2 CLI daemon, then exec provided command
+RUN printf '%s\n' "#!/bin/bash" \
+              "source /opt/ros/humble/setup.bash" \
+              "ros2 daemon start" \
+              "if [ \$# -eq 0 ]; then" \
+              "  exec tail -f /dev/null" \
+              "else" \
+              "  exec \"\$@\"" \
+              "fi" \
+    > /entrypoint.sh && chmod +x /entrypoint.sh
 
-# Optional: Source ROS 2 automatically for bash sessions
-RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+ENTRYPOINT ["/entrypoint.sh"]

@@ -18,16 +18,24 @@ ROS_CONTAINER_NAME="ros2_daemon"
 
 # Function to start the daemon if it's not already running
 start_ros_daemon() {
-    if ! sudo docker ps --format '{{.Names}}' | grep -q "^${ROS_CONTAINER_NAME}$"; then
+    if sudo docker ps --format '{{.Names}}' | grep -q "^${ROS_CONTAINER_NAME}$"; then
+        # Already running, nothing to do
+        return
+    elif sudo docker ps -a --format '{{.Names}}' | grep -q "^${ROS_CONTAINER_NAME}$"; then
+        echo "Starting ROS 2 Background Daemon (${ROS_CONTAINER_NAME})..."
+        sudo docker start "$ROS_CONTAINER_NAME"
+    else
         echo "Starting ROS 2 Background Daemon (${ROS_CONTAINER_NAME})..."
         # Start in detached mode (-d), using host networking and IPC
         sudo docker run -d \
             --name "$ROS_CONTAINER_NAME" \
             --network host \
             --ipc host \
-            -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
-            ros:humble-cyclone \
-            sleep infinity
+            --privileged \
+            -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+            -v /home/ws/fastdds_udp.xml:/fastdds_udp.xml \
+            -e FASTRTPS_DEFAULT_PROFILES_FILE=/fastdds_udp.xml \
+            ros:humble-cyclone
     fi
 }
 
