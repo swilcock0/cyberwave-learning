@@ -1,0 +1,1427 @@
+{
+  "icon": "",
+  "name": "UGV Beast",
+  "tags": [
+    "ground robot",
+    "ground vehicle",
+    "research robotics",
+    "path planning",
+    "open source"
+  ],
+  "uuid": "40797a0a-9824-4fec-bf24-b4bd4757a13c",
+  "asset": {
+    "name": "UGV Beast",
+    "uuid": "6be88314-bd1b-4fba-809a-448c4aedbf4a",
+    "glb_file": null,
+    "metadata": {
+      "icon": "",
+      "tags": [
+        "ground robot",
+        "ground vehicle",
+        "research robotics",
+        "path planning",
+        "open source",
+        "1 controllers"
+      ],
+      "weight": 0,
+      "drivers": {
+        "default": {
+          "params": [
+            "--device /dev/ttyAMA0:/dev/ttyAMA0",
+            "--device /dev/video0:/dev/video0",
+            "-v",
+            "/home/ws/my_configs/ugv/src/mqtt_bridge/config/params.yaml:/home/ws/ugv_ws/src/mqtt_bridge/config/params.yaml",
+            "-v",
+            "/home/ws/my_configs/ugv/src/mqtt_bridge/mqtt_bridge/mqtt_bridge_node.py:/home/ws/ugv_ws/src/mqtt_bridge/mqtt_bridge/mqtt_bridge_node.py",
+            "-v",
+            "/home/ws/my_configs/ugv/src/mqtt_bridge/mqtt_bridge/plugins/ugv_beast_command_handler.py:/home/ws/ugv_ws/src/mqtt_bridge/mqtt_bridge/plugins/ugv_beast_command_handler.py"
+          ],
+          "docker_image": "cyberwaveos/ugv-driver:dev"
+        }
+      },
+      "license": "",
+      "version": "",
+      "category": "",
+      "material": "",
+      "keyframes": [
+        {
+          "name": "Zero Pose",
+          "timestamp": "2025-12-18T11:19:18.383Z",
+          "description": "Default zero position for all joints",
+          "jointAngles": {
+            "right_up_wheel_link_joint": 0
+          }
+        }
+      ],
+      "use_cases": [],
+      "video_url": "",
+      "animations": [],
+      "dimensions": {
+        "width": 0,
+        "height": 0,
+        "length": 0
+      },
+      "usage_count": 0,
+      "manufacturer": "",
+      "model_number": "",
+      "download_count": 0,
+      "specifications": {},
+      "original_format": "",
+      "urdf_origin_url": "https://github.com/cyberwave-os/Catalog",
+      "default_position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "default_rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "urdf_origin_type": "github",
+      "visual_materials": {
+        "version": 2,
+        "variants": [
+          {
+            "id": "default",
+            "label": "Default",
+            "materials": {
+              "assignments": [
+                {
+                  "link": "pt_link1",
+                  "material": {
+                    "color": "#ffffff",
+                    "metalness": 0,
+                    "roughness": 0.35
+                  },
+                  "priority": 10
+                },
+                {
+                  "link": "pt_link2",
+                  "material": {
+                    "color": "#ffffff",
+                    "metalness": 0,
+                    "roughness": 0.35
+                  },
+                  "priority": 10
+                }
+              ]
+            }
+          }
+        ],
+        "active_variant": "default"
+      },
+      "documentation_url": "",
+      "source_repository": "",
+      "compatible_environments": []
+    },
+    "thumbnail": "https://storage.googleapis.com/cyberwave-downloads-cyberwave-os-production/media/assets/thumbnails/6be88314-bd1b-4fba-809a-448c4aedbf4a_thumb_85fNHxh..png?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=cloudrun-service-account-prod%40cyberwave-os.iam.gserviceaccount.com%2F20260413%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20260413T100633Z&X-Goog-Expires=86400&X-Goog-SignedHeaders=host&X-Goog-Signature=25beaf94fea2bd16289467ad3571c8dc6023d64b36e809ecb7d9164da4417cbb5ab7cdef811cd93d573f942753b335c3d71c2c937764d461969d8d22ea0b8ab019fcea8c483d73299ee969a3990c13b42d326096f058f5e849ec63b919f30fc3bb993ab0db8eefaf20731ea8dee6d07fea5f584402b7716bb68b797cc42a8510974498385b18834da77ffa562f4307de29e4d2b66aea1f4503fff0618fc572c8044f31a3284256d51b51fd857ae5534295144a70572d037fc80ca46a226e8a2e4d30d10ca8bdbdd6b132e75fe6fc763ed54285e781050aa71191696165d5ff2fc7e15b3f48a1ce914db5039a4fbc4a63773804c8772e93fa61b155da813959c4",
+    "urdf_file": "https://static.cyberwave.com/media/urdf_projects/urdfnewdataugv_beastugv_urdf/urdf/NEWDATAUGV_BeastUGV_.urdf",
+    "created_at": "2025-12-18T11:12:43.396000+00:00",
+    "fixed_base": false,
+    "kinematics": {
+      "links": [
+        {
+          "name": {
+            "name": "base_footprint"
+          }
+        },
+        {
+          "name": {
+            "name": "base_link",
+            "inertial": {
+              "mass": 2.5,
+              "inertia": {
+                "ixx": 0.01,
+                "ixy": 0,
+                "ixz": 0,
+                "iyy": 0.01,
+                "iyz": 0,
+                "izz": 0.01
+              }
+            }
+          }
+        },
+        {
+          "name": {
+            "name": "pt_link1",
+            "inertial": {
+              "mass": 0.1,
+              "inertia": {
+                "ixx": 0.001,
+                "ixy": 0,
+                "ixz": 0,
+                "iyy": 0.001,
+                "iyz": 0,
+                "izz": 0.001
+              }
+            }
+          }
+        },
+        {
+          "name": {
+            "name": "pt_link2",
+            "inertial": {
+              "mass": 0.1,
+              "inertia": {
+                "ixx": 0.001,
+                "ixy": 0,
+                "ixz": 0,
+                "iyy": 0.001,
+                "iyz": 0,
+                "izz": 0.001
+              }
+            }
+          }
+        },
+        {
+          "name": {
+            "name": "lidar_link"
+          }
+        },
+        {
+          "name": {
+            "name": "camera_link"
+          }
+        },
+        {
+          "name": {
+            "name": "left_front_wheel"
+          }
+        },
+        {
+          "name": {
+            "name": "left_rear_wheel"
+          }
+        },
+        {
+          "name": {
+            "name": "right_front_wheel"
+          }
+        },
+        {
+          "name": {
+            "name": "right_rear_wheel"
+          }
+        }
+      ],
+      "joints": [
+        {
+          "axis": null,
+          "name": "base_footprint_joint",
+          "type": "fixed",
+          "limits": null,
+          "origin": {
+            "rpy": [
+              0,
+              0,
+              0
+            ],
+            "xyz": [
+              0,
+              0,
+              0.1
+            ]
+          },
+          "child_link": "base_link",
+          "parent_link": "base_footprint"
+        },
+        {
+          "axis": [
+            0,
+            1,
+            0
+          ],
+          "name": "left_up_wheel_link_joint",
+          "type": "continuous",
+          "limits": null,
+          "origin": {
+            "rpy": [
+              0,
+              0,
+              0
+            ],
+            "xyz": [
+              0.15,
+              0.1,
+              0
+            ]
+          },
+          "child_link": "left_front_wheel",
+          "parent_link": "base_link"
+        },
+        {
+          "axis": [
+            0,
+            1,
+            0
+          ],
+          "name": "left_down_wheel_link_joint",
+          "type": "continuous",
+          "limits": null,
+          "origin": {
+            "rpy": [
+              0,
+              0,
+              0
+            ],
+            "xyz": [
+              -0.15,
+              0.1,
+              0
+            ]
+          },
+          "child_link": "left_rear_wheel",
+          "parent_link": "base_link"
+        },
+        {
+          "axis": [
+            0,
+            1,
+            0
+          ],
+          "name": "right_up_wheel_link_joint",
+          "type": "continuous",
+          "limits": null,
+          "origin": {
+            "rpy": [
+              0,
+              0,
+              0
+            ],
+            "xyz": [
+              0.15,
+              -0.1,
+              0
+            ]
+          },
+          "child_link": "right_front_wheel",
+          "parent_link": "base_link"
+        },
+        {
+          "axis": [
+            0,
+            1,
+            0
+          ],
+          "name": "right_down_wheel_link_joint",
+          "type": "continuous",
+          "limits": null,
+          "origin": {
+            "rpy": [
+              0,
+              0,
+              0
+            ],
+            "xyz": [
+              -0.15,
+              -0.1,
+              0
+            ]
+          },
+          "child_link": "right_rear_wheel",
+          "parent_link": "base_link"
+        },
+        {
+          "axis": [
+            0,
+            0,
+            1
+          ],
+          "name": "pt_base_link_to_pt_link1",
+          "type": "revolute",
+          "limits": {
+            "lower": -1.57,
+            "upper": 1.57,
+            "effort": 1,
+            "velocity": 1
+          },
+          "origin": {
+            "rpy": [
+              0,
+              0,
+              0
+            ],
+            "xyz": [
+              0.1,
+              0,
+              0.15
+            ]
+          },
+          "child_link": "pt_link1",
+          "parent_link": "base_link"
+        },
+        {
+          "axis": [
+            0,
+            1,
+            0
+          ],
+          "name": "pt_link1_to_pt_link2",
+          "type": "revolute",
+          "limits": {
+            "lower": -1.57,
+            "upper": 1.57,
+            "effort": 1,
+            "velocity": 1
+          },
+          "origin": {
+            "rpy": [
+              0,
+              0,
+              0
+            ],
+            "xyz": [
+              0,
+              0,
+              0.05
+            ]
+          },
+          "child_link": "pt_link2",
+          "parent_link": "pt_link1"
+        },
+        {
+          "axis": null,
+          "name": "lidar_joint",
+          "type": "fixed",
+          "limits": null,
+          "origin": {
+            "rpy": [
+              0,
+              0,
+              0
+            ],
+            "xyz": [
+              0,
+              0,
+              0.2
+            ]
+          },
+          "child_link": "lidar_link",
+          "parent_link": "base_link"
+        },
+        {
+          "axis": null,
+          "name": "camera_joint",
+          "type": "fixed",
+          "limits": null,
+          "origin": {
+            "rpy": [
+              0,
+              0,
+              0
+            ],
+            "xyz": [
+              0.02,
+              0,
+              0
+            ]
+          },
+          "child_link": "camera_link",
+          "parent_link": "pt_link2"
+        }
+      ]
+    },
+    "owner_uuid": "03aefef1-bd9b-4439-969d-cac0cfd4dbf5",
+    "updated_at": "2026-04-09T11:28:16.923000+00:00",
+    "visibility": "public",
+    "description": "UGV Beast is a versatile, compact unmanned ground vehicle designed for rugged terrain operations. Equipped with a robust chassis and modular design, it supports a variety of sensors and payloads for research, surveillance, and autonomous navigation tasks. Its durable construction and scalable capabilities make it ideal for both experimental robotics projects and practical field applications.",
+    "registry_id": "waveshare/ugv-beast",
+    "capabilities": {
+      "can_fly": false,
+      "sensors": [
+        {
+          "id": "front_camera",
+          "name": "front_camera",
+          "type": "rgb",
+          "model": null,
+          "offset": {
+            "position": {
+              "x": -0.0583,
+              "y": 0,
+              "z": -0.01
+            },
+            "rotation": {
+              "w": 0.5,
+              "x": 0.5,
+              "y": -0.5,
+              "z": -0.5
+            }
+          },
+          "parameters": {
+            "fovy": 153.5398,
+            "width": 640,
+            "height": 480,
+            "update_rate": 15
+          }
+        }
+      ],
+      "can_grip": false,
+      "has_legs": false,
+      "has_joints": false,
+      "has_wheels": true,
+      "can_actuate": true,
+      "can_locomote": true,
+      "power_source": "battery",
+      "locomotion_mode": "tracked",
+      "locomotion_config": {
+        "dof": 2,
+        "max_linear_velocity": 0.35,
+        "max_angular_velocity": 2
+      },
+      "manipulator_count": 0,
+      "power_capacity_wh": 67,
+      "payload_capacity_kg": 0,
+      "maximum_frequency_hz": 10,
+      "minimum_frequency_hz": 0,
+      "navigation_autonomy_level": "semi_autonomous",
+      "navigation_obstacle_avoidance": true
+    },
+    "workspace_uuid": "efe2204e-7478-43e3-8204-6aebf108c2bd",
+    "universal_schema": {
+      "links": [
+        {
+          "mass": 0,
+          "name": "base_footprint",
+          "inertia": {
+            "ixx": 0,
+            "ixy": 0,
+            "ixz": 0,
+            "iyy": 0,
+            "iyz": 0,
+            "izz": 0
+          },
+          "visuals": [],
+          "collisions": [],
+          "extensions": {},
+          "center_of_mass": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          }
+        },
+        {
+          "mass": 2.5,
+          "name": "base_link",
+          "inertia": {
+            "ixx": 0.01,
+            "ixy": 0,
+            "ixz": 0,
+            "iyy": 0.01,
+            "iyz": 0,
+            "izz": 0.01
+          },
+          "visuals": [
+            {
+              "name": null,
+              "pose": {
+                "position": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 0
+                },
+                "orientation": {
+                  "w": 1,
+                  "x": 0,
+                  "y": 0,
+                  "z": 0
+                }
+              },
+              "geometry": {
+                "size": null,
+                "type": "mesh",
+                "scale": {
+                  "x": 0.001,
+                  "y": 0.001,
+                  "z": 0.001
+                },
+                "length": null,
+                "radius": null,
+                "filename": "../../../../../meshes/UGV_Beast_PT2.stl",
+                "extensions": {}
+              },
+              "material": {
+                "name": "ugv_grey",
+                "color": [
+                  0.5,
+                  0.5,
+                  0.5,
+                  1
+                ],
+                "texture": null,
+                "emissive": null,
+                "specular": null,
+                "shininess": null
+              },
+              "extensions": {}
+            }
+          ],
+          "collisions": [
+            {
+              "name": null,
+              "pose": {
+                "position": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 0
+                },
+                "orientation": {
+                  "w": 1,
+                  "x": 0,
+                  "y": 0,
+                  "z": 0
+                }
+              },
+              "group": "default",
+              "damping": null,
+              "geometry": {
+                "size": null,
+                "type": "mesh",
+                "scale": {
+                  "x": 0.001,
+                  "y": 0.001,
+                  "z": 0.001
+                },
+                "length": null,
+                "radius": null,
+                "filename": "../../../../../meshes/UGV_Beast_PT2.stl",
+                "extensions": {}
+              },
+              "mu_static": null,
+              "stiffness": null,
+              "extensions": {},
+              "mu_dynamic": null,
+              "restitution": null
+            }
+          ],
+          "extensions": {},
+          "center_of_mass": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          }
+        },
+        {
+          "mass": 0.1,
+          "name": "pt_link1",
+          "inertia": {
+            "ixx": 0.001,
+            "ixy": 0,
+            "ixz": 0,
+            "iyy": 0.001,
+            "iyz": 0,
+            "izz": 0.001
+          },
+          "visuals": [],
+          "collisions": [],
+          "extensions": {},
+          "center_of_mass": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          }
+        },
+        {
+          "mass": 0.1,
+          "name": "pt_link2",
+          "inertia": {
+            "ixx": 0.001,
+            "ixy": 0,
+            "ixz": 0,
+            "iyy": 0.001,
+            "iyz": 0,
+            "izz": 0.001
+          },
+          "visuals": [],
+          "collisions": [],
+          "extensions": {},
+          "center_of_mass": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          }
+        },
+        {
+          "mass": 0,
+          "name": "lidar_link",
+          "inertia": {
+            "ixx": 0,
+            "ixy": 0,
+            "ixz": 0,
+            "iyy": 0,
+            "iyz": 0,
+            "izz": 0
+          },
+          "visuals": [],
+          "collisions": [],
+          "extensions": {},
+          "center_of_mass": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          }
+        },
+        {
+          "mass": 0,
+          "name": "camera_link",
+          "inertia": {
+            "ixx": 0,
+            "ixy": 0,
+            "ixz": 0,
+            "iyy": 0,
+            "iyz": 0,
+            "izz": 0
+          },
+          "visuals": [],
+          "collisions": [],
+          "extensions": {},
+          "center_of_mass": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          }
+        },
+        {
+          "mass": 0,
+          "name": "left_front_wheel",
+          "inertia": {
+            "ixx": 0,
+            "ixy": 0,
+            "ixz": 0,
+            "iyy": 0,
+            "iyz": 0,
+            "izz": 0
+          },
+          "visuals": [],
+          "collisions": [],
+          "extensions": {},
+          "center_of_mass": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          }
+        },
+        {
+          "mass": 0,
+          "name": "left_rear_wheel",
+          "inertia": {
+            "ixx": 0,
+            "ixy": 0,
+            "ixz": 0,
+            "iyy": 0,
+            "iyz": 0,
+            "izz": 0
+          },
+          "visuals": [],
+          "collisions": [],
+          "extensions": {},
+          "center_of_mass": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          }
+        },
+        {
+          "mass": 0,
+          "name": "right_front_wheel",
+          "inertia": {
+            "ixx": 0,
+            "ixy": 0,
+            "ixz": 0,
+            "iyy": 0,
+            "iyz": 0,
+            "izz": 0
+          },
+          "visuals": [],
+          "collisions": [],
+          "extensions": {},
+          "center_of_mass": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          }
+        },
+        {
+          "mass": 0,
+          "name": "right_rear_wheel",
+          "inertia": {
+            "ixx": 0,
+            "ixy": 0,
+            "ixz": 0,
+            "iyy": 0,
+            "iyz": 0,
+            "izz": 0
+          },
+          "visuals": [],
+          "collisions": [],
+          "extensions": {},
+          "center_of_mass": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          }
+        }
+      ],
+      "scene": null,
+      "joints": [
+        {
+          "axis": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "name": "base_footprint_joint",
+          "pose": {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0.1
+            },
+            "orientation": {
+              "w": 1,
+              "x": 0,
+              "y": 0,
+              "z": 0
+            }
+          },
+          "type": "fixed",
+          "limits": null,
+          "dynamics": null,
+          "child_link": "base_link",
+          "extensions": {},
+          "calibration": null,
+          "parent_link": "base_footprint",
+          "home_position": null,
+          "safety_controller": null
+        },
+        {
+          "axis": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "name": "left_up_wheel_link_joint",
+          "pose": {
+            "position": {
+              "x": 0.15,
+              "y": 0.1,
+              "z": 0
+            },
+            "orientation": {
+              "w": 1,
+              "x": 0,
+              "y": 0,
+              "z": 0
+            }
+          },
+          "type": "continuous",
+          "limits": null,
+          "dynamics": null,
+          "child_link": "left_front_wheel",
+          "extensions": {},
+          "calibration": null,
+          "parent_link": "base_link",
+          "home_position": null,
+          "safety_controller": null
+        },
+        {
+          "axis": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "name": "left_down_wheel_link_joint",
+          "pose": {
+            "position": {
+              "x": -0.15,
+              "y": 0.1,
+              "z": 0
+            },
+            "orientation": {
+              "w": 1,
+              "x": 0,
+              "y": 0,
+              "z": 0
+            }
+          },
+          "type": "continuous",
+          "limits": null,
+          "dynamics": null,
+          "child_link": "left_rear_wheel",
+          "extensions": {},
+          "calibration": null,
+          "parent_link": "base_link",
+          "home_position": null,
+          "safety_controller": null
+        },
+        {
+          "axis": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "name": "right_up_wheel_link_joint",
+          "pose": {
+            "position": {
+              "x": 0.15,
+              "y": -0.1,
+              "z": 0
+            },
+            "orientation": {
+              "w": 1,
+              "x": 0,
+              "y": 0,
+              "z": 0
+            }
+          },
+          "type": "continuous",
+          "limits": null,
+          "dynamics": null,
+          "child_link": "right_front_wheel",
+          "extensions": {},
+          "calibration": null,
+          "parent_link": "base_link",
+          "home_position": null,
+          "safety_controller": null
+        },
+        {
+          "axis": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "name": "right_down_wheel_link_joint",
+          "pose": {
+            "position": {
+              "x": -0.15,
+              "y": -0.1,
+              "z": 0
+            },
+            "orientation": {
+              "w": 1,
+              "x": 0,
+              "y": 0,
+              "z": 0
+            }
+          },
+          "type": "continuous",
+          "limits": null,
+          "dynamics": null,
+          "child_link": "right_rear_wheel",
+          "extensions": {},
+          "calibration": null,
+          "parent_link": "base_link",
+          "home_position": null,
+          "safety_controller": null
+        },
+        {
+          "axis": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "name": "pt_base_link_to_pt_link1",
+          "pose": {
+            "position": {
+              "x": 0.1,
+              "y": 0,
+              "z": 0.15
+            },
+            "orientation": {
+              "w": 1,
+              "x": 0,
+              "y": 0,
+              "z": 0
+            }
+          },
+          "type": "revolute",
+          "limits": {
+            "lower": -1.57,
+            "upper": 1.57,
+            "effort": 1,
+            "jerkmax": null,
+            "velocity": 1,
+            "acceleration": null
+          },
+          "dynamics": null,
+          "child_link": "pt_link1",
+          "extensions": {},
+          "calibration": null,
+          "parent_link": "base_link",
+          "home_position": null,
+          "safety_controller": null
+        },
+        {
+          "axis": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "name": "pt_link1_to_pt_link2",
+          "pose": {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0.05
+            },
+            "orientation": {
+              "w": 1,
+              "x": 0,
+              "y": 0,
+              "z": 0
+            }
+          },
+          "type": "revolute",
+          "limits": {
+            "lower": -1.57,
+            "upper": 1.57,
+            "effort": 1,
+            "jerkmax": null,
+            "velocity": 1,
+            "acceleration": null
+          },
+          "dynamics": null,
+          "child_link": "pt_link2",
+          "extensions": {},
+          "calibration": null,
+          "parent_link": "pt_link1",
+          "home_position": null,
+          "safety_controller": null
+        },
+        {
+          "axis": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "name": "lidar_joint",
+          "pose": {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0.2
+            },
+            "orientation": {
+              "w": 1,
+              "x": 0,
+              "y": 0,
+              "z": 0
+            }
+          },
+          "type": "fixed",
+          "limits": null,
+          "dynamics": null,
+          "child_link": "lidar_link",
+          "extensions": {},
+          "calibration": null,
+          "parent_link": "base_link",
+          "home_position": null,
+          "safety_controller": null
+        },
+        {
+          "axis": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "name": "camera_joint",
+          "pose": {
+            "position": {
+              "x": 0.02,
+              "y": 0,
+              "z": 0
+            },
+            "orientation": {
+              "w": 1,
+              "x": 0,
+              "y": 0,
+              "z": 0
+            }
+          },
+          "type": "fixed",
+          "limits": null,
+          "dynamics": null,
+          "child_link": "camera_link",
+          "extensions": {},
+          "calibration": null,
+          "parent_link": "pt_link2",
+          "home_position": null,
+          "safety_controller": null
+        }
+      ],
+      "physics": null,
+      "sensors": [
+        {
+          "name": "front_camera",
+          "pose": {
+            "position": {
+              "x": -0.0583,
+              "y": 0,
+              "z": -0.01
+            },
+            "orientation": {
+              "w": 0.5,
+              "x": 0.5,
+              "y": -0.5,
+              "z": -0.5
+            }
+          },
+          "type": "camera",
+          "noise": null,
+          "extensions": {},
+          "parameters": {
+            "fovy": 153.5398,
+            "width": 640,
+            "height": 480,
+            "description": "160° ultra-wide-angle 5MP USB camera on 2-DOF pan/tilt"
+          },
+          "parent_link": "camera_link",
+          "update_rate": 15
+        }
+      ],
+      "contacts": [],
+      "metadata": {
+        "name": "ugv_beast_pt",
+        "units": "SI",
+        "author": null,
+        "version": "1.0",
+        "extensions": {},
+        "description": "Converted from URDF: NEWDATAUGV_BeastUGV_.urdf",
+        "creation_date": null,
+        "source_format": "urdf"
+      },
+      "actuators": [
+        {
+          "kd": 0.5,
+          "ki": null,
+          "kp": 15,
+          "name": "pt_base_link_to_pt_link1_position",
+          "type": "position",
+          "joint": "pt_base_link_to_pt_link1",
+          "efficiency": null,
+          "extensions": {},
+          "gear_ratio": null,
+          "inductance": null,
+          "max_torque": 1,
+          "resistance": null,
+          "max_current": null,
+          "max_velocity": null,
+          "torque_constant": null
+        },
+        {
+          "kd": 0.5,
+          "ki": null,
+          "kp": 15,
+          "name": "pt_link1_to_pt_link2_position",
+          "type": "position",
+          "joint": "pt_link1_to_pt_link2",
+          "efficiency": null,
+          "extensions": {},
+          "gear_ratio": null,
+          "inductance": null,
+          "max_torque": 1,
+          "resistance": null,
+          "max_current": null,
+          "max_velocity": null,
+          "torque_constant": null
+        }
+      ],
+      "extensions": {
+        "cyberwave": {
+          "schema_hash": "86a7f1f8b22531525c5b1d09473eb38f31050bb3e25411a35b000594eff776a6",
+          "capabilities": {
+            "power": {
+              "source": "battery",
+              "capacity_wh": 67
+            },
+            "locomotion": {
+              "dof": 2,
+              "mode": "tracked",
+              "can_fly": false,
+              "has_legs": false,
+              "has_wheels": true,
+              "max_linear_velocity": 0.35,
+              "max_angular_velocity": 2
+            },
+            "navigation": {
+              "autonomy_level": "semi_autonomous",
+              "obstacle_avoidance": true
+            },
+            "structural": {
+              "has_joints": false,
+              "can_actuate": true
+            },
+            "performance": {
+              "max_control_frequency_hz": 10,
+              "min_control_frequency_hz": 0
+            },
+            "manipulation": {
+              "can_grip": false,
+              "max_payload_kg": 0,
+              "manipulator_count": 0
+            }
+          }
+        },
+        "parse_context": {
+          "errors": [],
+          "warnings": [],
+          "materials": {}
+        }
+      },
+      "collision_config": {
+        "pairs": [],
+        "groups": {
+          "default": {
+            "name": "default",
+            "contype": 1,
+            "conaffinity": 1
+          }
+        },
+        "excludes": [],
+        "extensions": {}
+      }
+    },
+    "registry_id_alias": null,
+    "has_universal_schema": true
+  },
+  "weight": 0,
+  "drivers": {
+    "default": {
+      "params": [
+        "--device",
+        "/dev/ttyAMA0:/dev/ttyAMA0",
+        "--device",
+        "/dev/video0:/dev/video0",
+        "-v",
+        "/home/ws/my_configs/ugv/src/mqtt_bridge/config/params.yaml:/home/ws/ugv_ws/src/mqtt_bridge/config/params.yaml",
+        "-v",
+        "/home/ws/my_configs/ugv/src/mqtt_bridge/mqtt_bridge/mqtt_bridge_node.py:/home/ws/ugv_ws/src/mqtt_bridge/mqtt_bridge/mqtt_bridge_node.py",
+        "-v",
+        "/home/ws/my_configs/ugv/src/mqtt_bridge/mqtt_bridge/plugins/ugv_beast_command_handler.py:/home/ws/ugv_ws/src/mqtt_bridge/mqtt_bridge/plugins/ugv_beast_command_handler.py"
+      ],
+      "docker_image": "cyberwaveos/ugv-driver:dev"
+    }
+  },
+  "license": "",
+  "scale_x": 1,
+  "scale_y": 1,
+  "scale_z": 1,
+  "version": "",
+  "category": "",
+  "material": "",
+  "metadata": {
+    "icon": "",
+    "tags": [
+      "ground robot",
+      "ground vehicle",
+      "research robotics",
+      "path planning",
+      "open source"
+    ],
+    "weight": 0,
+    "drivers": {
+      "default": {
+        "params": [
+          "--device /dev/ttyAMA0:/dev/ttyAMA0",
+            "--device /dev/video0:/dev/video0",
+            "-v",
+            "/home/ws/my_configs/ugv/src/mqtt_bridge/config/params.yaml:/home/ws/ugv_ws/src/mqtt_bridge/config/params.yaml",
+            "-v",
+            "/home/ws/my_configs/ugv/src/mqtt_bridge/mqtt_bridge/mqtt_bridge_node.py:/home/ws/ugv_ws/src/mqtt_bridge/mqtt_bridge/mqtt_bridge_node.py",
+            "-v",
+            "/home/ws/my_configs/ugv/src/mqtt_bridge/mqtt_bridge/plugins/ugv_beast_command_handler.py:/home/ws/ugv_ws/src/mqtt_bridge/mqtt_bridge/plugins/ugv_beast_command_handler.py"
+        ],
+        "docker_image": "cyberwaveos/ugv-driver:dev"
+      }
+    },
+    "license": "",
+    "version": "",
+    "category": "",
+    "material": "",
+    "ui_state": {
+      "visible": true
+    },
+    "keyframes": [
+      {
+        "name": "Zero Pose",
+        "timestamp": "2025-12-18T11:19:18.383Z",
+        "description": "Default zero position for all joints",
+        "jointAngles": {
+          "right_up_wheel_link_joint": 0
+        }
+      }
+    ],
+    "use_cases": [],
+    "video_url": "",
+    "animations": [],
+    "dimensions": {
+      "width": 0,
+      "height": 0,
+      "length": 0
+    },
+    "usage_count": 0,
+    "control_mode": "joint_control",
+    "edge_configs": {
+      "camera_config": {}
+    },
+    "manufacturer": "",
+    "model_number": "",
+    "download_count": 0,
+    "specifications": {},
+    "controller_type": "teleop",
+    "original_format": "",
+    "urdf_origin_url": "https://github.com/cyberwave-os/Catalog",
+    "default_position": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "default_rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "edge_fingerprint": "ugvrpi-78e6dfc08d25",
+    "urdf_origin_type": "github",
+    "documentation_url": "",
+    "source_repository": "",
+    "controller_policy_name": "UGV Beast Controller",
+    "controller_policy_uuid": "81bc9cf6-6139-45f1-8162-185dac565631",
+    "compatible_environments": []
+  },
+  "ui_state": {
+    "visible": true
+  },
+  "keyframes": [
+    {
+      "name": "Zero Pose",
+      "timestamp": "2025-12-18T11:19:18.383Z",
+      "description": "Default zero position for all joints",
+      "jointAngles": {
+        "right_up_wheel_link_joint": 0
+      }
+    }
+  ],
+  "urdf_file": "https://static.cyberwave.com/media/urdf_projects/urdfnewdataugv_beastugv_urdf/urdf/NEWDATAUGV_BeastUGV_.urdf",
+  "use_cases": [],
+  "video_url": "",
+  "animations": [],
+  "asset_uuid": "6be88314-bd1b-4fba-809a-448c4aedbf4a",
+  "created_at": "2026-04-01T12:03:10.635000+00:00",
+  "dimensions": {
+    "width": 0,
+    "height": 0,
+    "length": 0
+  },
+  "fixed_base": false,
+  "position_x": 0,
+  "position_y": 0,
+  "position_z": -0.07,
+  "rotation_w": 1,
+  "rotation_x": 0,
+  "rotation_y": 0,
+  "rotation_z": 0,
+  "updated_at": "2026-04-13T09:56:26.025000+00:00",
+  "visibility": "org",
+  "description": "Digital twin created from asset",
+  "usage_count": 0,
+  "capabilities": {
+    "can_fly": false,
+    "sensors": [
+      {
+        "id": "default",
+        "name": "default",
+        "type": "rgb",
+        "model": null,
+        "offset": {
+          "position": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "rotation": {
+            "w": 1,
+            "x": 0,
+            "y": 0,
+            "z": 0
+          }
+        },
+        "parameters": {
+          "width": 640,
+          "height": 480,
+          "update_rate": 30,
+          "fov_vertical": 60,
+          "fov_horizontal": 90
+        }
+      }
+    ],
+    "can_grip": false,
+    "has_legs": false,
+    "has_joints": true,
+    "has_wheels": true,
+    "can_actuate": true,
+    "can_locomote": true,
+    "power_source": "battery",
+    "locomotion_mode": "wheeled",
+    "locomotion_config": {
+      "dof": 0,
+      "max_linear_velocity": 0,
+      "max_angular_velocity": 0
+    },
+    "manipulator_count": 0,
+    "power_capacity_wh": -1,
+    "payload_capacity_kg": 0,
+    "maximum_frequency_hz": 30,
+    "minimum_frequency_hz": 0,
+    "navigation_autonomy_level": "manual",
+    "navigation_obstacle_avoidance": false
+  },
+  "control_mode": "joint_control",
+  "edge_configs": {
+    "camera_config": {}
+  },
+  "joint_states": {
+    "pt_link1_to_pt_link2": 0,
+    "left_up_wheel_link_joint": 0,
+    "pt_base_link_to_pt_link1": 0,
+    "right_up_wheel_link_joint": 0,
+    "left_down_wheel_link_joint": 0,
+    "right_down_wheel_link_joint": 0
+  },
+  "manufacturer": "",
+  "model_number": "",
+  "download_count": 0,
+  "specifications": {},
+  "attach_offset_x": 0,
+  "attach_offset_y": 0,
+  "attach_offset_z": 0,
+  "controller_type": "teleop",
+  "export_warnings": [],
+  "original_format": "",
+  "urdf_origin_url": "https://github.com/cyberwave-os/Catalog",
+  "child_twin_uuids": [],
+  "default_position": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "edge_fingerprint": "ugvrpi-78e6dfc08d25",
+  "environment_uuid": "7423dae7-0587-4ad9-892a-6144fb9838f3",
+  "urdf_origin_type": "github",
+  "documentation_url": "",
+  "joint_calibration": {},
+  "source_repository": "",
+  "kinematics_override": {},
+  "controller_policy_name": "UGV Beast Controller",
+  "controller_policy_uuid": "81bc9cf6-6139-45f1-8162-185dac565631",
+  "compatible_environments": [],
+  "attach_offset_rotation_w": 1,
+  "attach_offset_rotation_x": 0,
+  "attach_offset_rotation_y": 0,
+  "attach_offset_rotation_z": 0
+}
