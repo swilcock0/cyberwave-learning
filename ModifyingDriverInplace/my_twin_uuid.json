@@ -1222,7 +1222,7 @@
     "drivers": {
       "default": {
         "params": [
-          "--device /dev/ttyAMA0:/dev/ttyAMA0",
+            "--device /dev/ttyAMA0:/dev/ttyAMA0",
             "--device /dev/video0:/dev/video0",
             "-v",
             "/home/ws/my_configs/ugv/src/mqtt_bridge/config/params.yaml:/home/ws/ugv_ws/src/mqtt_bridge/config/params.yaml",
