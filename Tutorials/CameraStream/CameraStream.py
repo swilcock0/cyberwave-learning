@@ -9,7 +9,7 @@ except ImportError:
     exit(1)
 
 from cyberwave import Cyberwave
-
+from config import TWIN_UUID, ENVIRONMENT_UUID
 
 def main():
     # 1. Initialize and connect to Cyberwave
@@ -19,8 +19,8 @@ def main():
     print("Connecting to UGV Beast...")
     ugv_beast = cw.twin(
         "waveshare/ugv-beast",
-        twin_id="40797a0a-9824-4fec-bf24-b4bd4757a13c",
-        environment_id="7423dae7-0587-4ad9-892a-6144fb9838f3"
+        twin_id=TWIN_UUID,
+        environment_id=ENVIRONMENT_UUID
     )
 
     window_name = "UGV Live Camera"
