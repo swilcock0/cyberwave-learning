@@ -9,6 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
         apt-get install -y --no-install-recommends \
             ros-humble-rosbridge-server \
+            ros-humble-teleop-twist-keyboard \
         && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* /usr/share/doc/* /usr/share/man/*
 
 # Entrypoint: source ROS, start the ros2 CLI daemon, then exec provided command

@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<robot name="d500_lidar">
+  <!-- Base Link -->
+  <link name="lidar_base_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://d500_description/meshes/LD19.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="dark_grey">
+        <color rgba="0.2 0.2 0.2 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.04" radius="0.035"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.12"/>
+      <origin xyz="0 0 0.02"/>
+      <inertia ixx="0.0001" ixy="0.0" ixz="0.0" iyy="0.0001" iyz="0.0" izz="0.0001"/>
+    </inertial>
+  </link>
+
+  <!-- Laser Frame (Center of Rotation) -->
+  <link name="laser_frame"/>
+
+  <!-- Optical Frame (mounting offset at 27mm) -->
+  <link name="lidar_optical_link"/>
+
+  <joint name="lidar_base_to_optical_joint" type="fixed">
+    <parent link="lidar_base_link"/>
+    <child link="lidar_optical_link"/>
+    <!-- Positioned 27mm (0.027m) above the base -->
+    <origin xyz="0 0 0.027" rpy="0 0 0"/>
+  </joint>
+
+  <joint name="lidar_base_to_laser_joint" type="fixed">
+    <parent link="lidar_base_link"/>
+    <child link="laser_frame"/>
+    <!-- The LD19 rotation plane is approximately 30mm above the base mount -->
+    <origin xyz="0 0 0.03" rpy="0 0 0"/>
+  </joint>
+</robot>

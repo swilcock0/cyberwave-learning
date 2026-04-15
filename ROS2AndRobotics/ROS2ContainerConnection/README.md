@@ -23,6 +23,7 @@ For the DDS communication to work properly across containers and the host, you m
 2. **Add the function** into the `~/.bashrc` profile. Notice the volume mount `-v /home/ws/fastdds_udp.xml:/fastdds_udp.xml` which makes the configuration available inside the container.
 
 ```bash
+
 # --- ROS 2 Background Daemon Configuration ---
 ROS_CONTAINER_NAME="ros2_daemon"
 
@@ -54,13 +55,17 @@ dros2() {
     # Ensure the daemon is up before exec-ing
     start_ros_daemon
 
+    local args=("$@")
+    if [ "${args[0]}" = "teleop" ]; then
+        args=(run teleop_twist_keyboard teleop_twist_keyboard "${args[@]:1}")
+    fi
+
     # Use -t for colors/formatting, but -i only if stdin is a terminal
     sudo docker exec -it "$ROS_CONTAINER_NAME" \
-        /bin/bash -c "source /opt/ros/humble/setup.bash && ros2 $*"
+        /bin/bash -c 'source /opt/ros/humble/setup.bash && exec ros2 "$@"' -- "${args[@]}"
 }
 
 _dros2_complete() {
-    local cur=${COMP_WORDS[COMP_CWORD]}
     local line="${COMP_LINE}"
     
     # 1. Translate host command 'dros2' to container command 'ros2'
@@ -69,21 +74,19 @@ _dros2_complete() {
     local ros2_point=$((${#ros2_line}))
 
     # 2. Grab suggestions from the container
-    # We use 'tr' to convert the Vertical Tab (\v) to a Newline (\n)
-    # and remove carriage returns (\r)
-    local suggestions=$(sudo docker exec "$ROS_CONTAINER_NAME" \
-        /bin/bash -c "source /opt/ros/humble/setup.bash && \
-        _ARGCOMPLETE=1 \
-        COMP_LINE='$ros2_line' \
-        COMP_POINT='$ros2_point' \
-        ros2 8>&1 9>&2 1>/dev/null 2>/dev/null" | tr '\v' '\n' | tr -d '\r')
-
-    # 3. Fill the completion array, splitting by newline
-    local IFS=$'\n'
-    COMPREPLY=( $(compgen -W "$suggestions" -- "$cur") )
+    # python-argcomplete separates suggestions with Vertical Tab (\v, $'\013').
+    # We do NOT use compgen because ros2 has already filtered the suggestions 
+    # based on COMP_LINE/COMP_POINT, and compgen would break multiline output.
+    local IFS=$'\013'
+    COMPREPLY=( $(sudo docker exec \
+        -e _ARGCOMPLETE=1 \
+        -e "COMP_LINE=$ros2_line" \
+        -e "COMP_POINT=$ros2_point" \
+        "$ROS_CONTAINER_NAME" \
+        /bin/bash -c "source /opt/ros/humble/setup.bash && ros2 8>&1 9>&2 1>/dev/null 2>/dev/null" | tr -d '\r') )
 }
 
-complete -F _dros2_complete dros2
+complete -o default -o nospace -F _dros2_complete dros2
 
 # Auto-start check when you open a new shell
 start_ros_daemon
@@ -105,7 +108,10 @@ sudo docker run -it --rm --network host --ipc host ros:humble-cyclone
 ```
 which will allow further interaction.
 
-
+As a little bonus, I've added in direct access to teleoperation (which publishes over cmd_vel). Just run 
+```bash
+dros2 teleop
+```
 
 
 #### TODO
