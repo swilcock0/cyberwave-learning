@@ -3,7 +3,7 @@
 Fuses `/odom`, `/imu/data_raw`, and `/imu/mag` using the ROS 2 `robot_localization` Extended
 Kalman Filter alongside the `imu_filter_madgwick` algorithm for precise 3D orientation. It then forwards the filtered odometry to an MQTT broker.
 
-> **Note:** The `cyberwave-driver` naturally publishes the robot's map `pose` automatically to drive the 3D Digital Twin simulation from the ROS2 `odom` topic. This `odom` topic does not however get populated fully in the Cyberwave driver so we fill it by fusing data sources. The secondary work done here publishing the EKF's `/odom` stream natively to `odometry_filtered` over a sidecar MQTT payload is built simply for educational/demonstrative purposes on publishing ROS->MQTT from a container.
+> **Note:** The `cyberwave-driver` naturally publishes the robot's map `pose` automatically to drive the 3D Digital Twin simulation from the ROS2 `odom` topic. This `odom` topic does not however get populated fully in the Cyberwave driver (its missing rotation) so we fill it by fusing data sources. The secondary work done here publishing the EKF's `/odom` stream natively to `odometry_filtered` over a sidecar MQTT payload is built simply for educational/demonstrative purposes on publishing ROS->MQTT from a container.
 
 Runs in a dedicated Docker container (`ros2_ekf`), sharing the robot's DDS network via `--network host`.
 
