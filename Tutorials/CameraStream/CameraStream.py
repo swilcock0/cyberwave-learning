@@ -39,7 +39,10 @@ try:
                     calib_mtx, calib_dist, resolution, 0.5, resolution)
                 undistort_map = cv2.initUndistortRectifyMap(
                     calib_mtx, calib_dist, None, new_camera_matrix, resolution, 5)
-
+            print("--- Distorted to Undistorted Info ---")
+            print(f"New K: {new_camera_matrix.flatten().tolist()}")
+            print("Note: Use 'New K' and zero distortion for PnP/AprilTags on the undistorted frame.")
+            print("-----------------------------------")
 except Exception as e:
     print(f"Failed to initialize OpenCV/calibration: {e}")
     cv2 = None
@@ -229,19 +232,7 @@ else:
     finally:
         stop_event.set()
 
-# ugv_beast.edit_rotation(yaw=0)
 
-# ugv_beast.edit_scale(x=1.5, y=1.5, z=1.5)
-# ugv_beast.subscribe_position(lambda data: print("Position:", data))
-# ugv_beast.subscribe_rotation(lambda data: print("Rotation:", data))
-
-# ugv_beast.move_forward(distance=0.1) # Works but doesn't stop!
-# time.sleep(20)
-# ugv_beast.turn_left(angle=math.radians(90)) # Works but doesn't stop!
-# ugv_beast.turn_right(angle=math.radians(90)) # Works but doesn't stop!
-# ugv_beast.subscribe_joints(lambda data: print("Joints:", data))
-# time.sleep(20)
-# Stop the video thread and clean up OpenCV windows before disconnecting
 stop_event.set()
 try:
     fetch_thread.join(timeout=1)
