@@ -9,45 +9,46 @@ try:
     import numpy as np
     import os
     
-    calib_mtx = None
-    calib_dist = None
-    undistort_map = None
-    
-    calib_path = os.path.join(os.path.dirname(__file__), 'camera_calib.npz')
-    if os.path.exists(calib_path):
-        with np.load(calib_path) as calib:
-            calib_mtx = calib['camera_matrix']
-            calib_dist = calib['dist_coeffs']
-            resolution = tuple(calib.get('resolution', (640, 480)))
-            is_fisheye = calib.get('fisheye', False)
-            
-            print("--- ROS camera_info ---")
-            print(f"height: {resolution[1]}")
-            print(f"width: {resolution[0]}")
-            print(f"distortion_model: {'fisheye' if is_fisheye else 'plumb_bob'}")
-            print(f"D: {calib_dist.flatten().tolist()}")
-            print(f"K: {calib_mtx.flatten().tolist()}")
-            print("-----------------------")
-            
-            if is_fisheye:
-                new_resolution = (int(resolution[0] * 1.5), int(resolution[1] * 1.5))
-                new_camera_matrix = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
-                    calib_mtx, calib_dist, resolution, np.eye(3), balance=1.0, fov_scale=1.2, new_size=new_resolution)
-                undistort_map = cv2.fisheye.initUndistortRectifyMap(
-                    calib_mtx, calib_dist, np.eye(3), new_camera_matrix, new_resolution, cv2.CV_16SC2)
-            else:
-                new_resolution = (int(resolution[0] * 1.5), int(resolution[1] * 1.5))
-                new_camera_matrix, roi = cv2.getOptimalNewCameraMatrix(
-                    calib_mtx, calib_dist, resolution, 0.5, new_resolution)
-                undistort_map = cv2.initUndistortRectifyMap(
-                    calib_mtx, calib_dist, None, new_camera_matrix, new_resolution, 5)
-                
-            print("--- Distorted to Undistorted Info ---")
-            print(f"New Resolution: {new_resolution}")
-            print(f"New K: {new_camera_matrix.flatten().tolist()}")
-            print("Note: Use 'New K' and zero distortion for PnP/AprilTags on the undistorted frame.")
-            print("-----------------------------------")
-            
+    # Setup AprilTag Dictionary (36h11 is standard)
+    try:
+        aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
+        aruco_params = cv2.aruco.DetectorParameters()
+        
+        # Increase the resolution of the adaptive thresholding
+        aruco_params.adaptiveThreshWinSizeMin = 3
+        aruco_params.adaptiveThreshWinSizeMax = 23
+        aruco_params.adaptiveThreshWinSizeStep = 10
+
+        # AprilTag specific refinement (if your OpenCV version supports it)
+        # This is often more robust for AprilTags than SUBPIX
+        try:
+            aruco_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_APRILTAG
+        except:
+            aruco_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+        
+        # Try lowering this to accept slightly distorted quads
+        aruco_params.maxErroneousBitsInBorderRate = 0.8
+        
+        # Robustness: Accept more deformed/jagged quads (default is 0.03)
+        # This helps when interpolation makes the straight lines look wavy/jagged
+        aruco_params.polygonalApproxAccuracyRate = 0.055
+        
+        # Robustness: Catch skinnier/smaller tags that get compressed at the edges
+        aruco_params.minMarkerPerimeterRate = 0.015
+        
+        # Robustness: Boost the internal payload error correction to recover blurry bits
+        aruco_params.errorCorrectionRate = 0.9
+        
+        if hasattr(cv2.aruco, 'ArucoDetector'):
+            aruco_detector = cv2.aruco.ArucoDetector(aruco_dict, aruco_params)
+        else:
+            aruco_detector = None
+    except AttributeError:
+        aruco_dict = None
+        aruco_params = None
+        aruco_detector = None
+        print("cv2.aruco not available. AprilTag detection disabled.")
+        
 except Exception as e:
     print(f"Failed to initialize OpenCV/calibration: {e}")
     cv2 = None
@@ -188,19 +189,7 @@ ugv_beast.edit_position(x=0.0, y=0.0, z=-0.07)
 # If OpenCV available, start a background thread that continuously
 # fetches the latest JPEG frame and shows it in a window.
 stop_event = threading.Event()
-_fetch_logged = {"rest_ok": False, "rest_fail": 0, "res_printed": False, "actual_res": None}
-_undistort_map_cache = {}
-
-def _scale_camera_matrix(K, original_res, new_res):
-    """Scale camera matrix K from original resolution to new resolution."""
-    scale_x = new_res[0] / original_res[0]
-    scale_y = new_res[1] / original_res[1]
-    K_scaled = K.copy()
-    K_scaled[0, 0] *= scale_x  # fx
-    K_scaled[1, 1] *= scale_y  # fy
-    K_scaled[0, 2] *= scale_x  # cx
-    K_scaled[1, 2] *= scale_y  # cy
-    return K_scaled
+_fetch_logged = {"rest_ok": False, "rest_fail": 0}
 
 def _fetch_loop():
     """Background thread: request frames from edge via MQTT take_photo command."""
@@ -239,37 +228,91 @@ else:
                 arr = np.frombuffer(raw_bytes, dtype=np.uint8)
                 img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                 if img is not None:
-                    if not _fetch_logged["res_printed"]:
-                        height, width = img.shape[:2]
-                        _fetch_logged["actual_res"] = (width, height)
-                        print(f"Image resolution: {width}x{height}")
-                        _fetch_logged["res_printed"] = True
-                    
-                    # Scale undistortion if frame resolution differs from calibration resolution
-                    actual_res = _fetch_logged["actual_res"]
-                    if undistort_map is not None and actual_res and actual_res != resolution:
-                        cache_key = actual_res
-                        if cache_key not in _undistort_map_cache:
-                            # Recompute undistortion map for actual frame resolution
-                            scaled_mtx = _scale_camera_matrix(calib_mtx, resolution, actual_res)
-                            if is_fisheye:
-                                new_res_scaled = (int(actual_res[0] * 1.5), int(actual_res[1] * 1.5))
-                                new_cam_matrix = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
-                                    scaled_mtx, calib_dist, actual_res, np.eye(3), balance=1.0, fov_scale=1.2, new_size=new_res_scaled)
-                                new_undistort_map = cv2.fisheye.initUndistortRectifyMap(
-                                    scaled_mtx, calib_dist, np.eye(3), new_cam_matrix, new_res_scaled, cv2.CV_16SC2)
-                            else:
-                                new_res_scaled = (int(actual_res[0] * 1.5), int(actual_res[1] * 1.5))
-                                new_cam_matrix, _ = cv2.getOptimalNewCameraMatrix(
-                                    scaled_mtx, calib_dist, actual_res, 0.5, new_res_scaled)
-                                new_undistort_map = cv2.initUndistortRectifyMap(
-                                    scaled_mtx, calib_dist, None, new_cam_matrix, new_res_scaled, 5)
-                            _undistort_map_cache[cache_key] = new_undistort_map
+                    # Display image without distortion correction
+                    display_img = img.copy()
                         
-                        img = cv2.remap(img, _undistort_map_cache[cache_key][0], _undistort_map_cache[cache_key][1], cv2.INTER_LINEAR)
-                    elif undistort_map is not None:
-                        img = cv2.remap(img, undistort_map[0], undistort_map[1], cv2.INTER_LINEAR)
-                    cv2.imshow(window_name, img)
+                    # --- AprilTag Detection ---
+                    if aruco_dict is not None:
+                        gray = cv2.cvtColor(display_img, cv2.COLOR_BGR2GRAY)
+                        
+                        # Apply CLAHE to boost contrast
+                        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+                        gray_boost = clahe.apply(gray)
+                        
+                        # Apply Unsharp Mask to sharpen edges
+                        blur = cv2.GaussianBlur(gray_boost, (0, 0), 3)
+                        sharp_gray = cv2.addWeighted(gray_boost, 2.0, blur, -1.0, 0)
+
+                        if aruco_detector is not None:
+                            corners, ids, rejected = aruco_detector.detectMarkers(sharp_gray)
+                        else:
+                            corners, ids, rejected = cv2.aruco.detectMarkers(sharp_gray, aruco_dict, parameters=aruco_params)
+                    else:
+                        ids = None
+
+                    if ids is not None and len(ids) > 0:
+                        # Draw detected markers
+                        cv2.aruco.drawDetectedMarkers(display_img, corners)
+                        
+                        # Draw tag numbers in white
+                        for i in range(len(ids)):
+                            corners_pts = corners[i][0].astype(int)
+                            center_x = int(np.mean(corners_pts[:, 0])+20)
+                            center_y = int(np.mean(corners_pts[:, 1]))
+                            cv2.putText(display_img, str(ids[i][0]), (center_x - 10, center_y + 5),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                        
+                        # Pose estimation with default camera matrix (no calibration)
+                        # Calculate focal length from camera FOV (170 degrees horizontal)
+                        h, w = display_img.shape[:2]
+                        fov_degrees = 118.0
+                        fov_radians = math.radians(fov_degrees / 2.0)
+                        focal_length = (w / 2.0) / math.tan(fov_radians)
+                        center = (w / 2.0, h / 2.0)
+                        camera_matrix = np.array([
+                            [focal_length, 0, center[0]],
+                            [0, focal_length, center[1]],
+                            [0, 0, 1]
+                        ], dtype=np.float32)
+                        
+                        tag_size = 0.2
+                        obj_pts = np.array([
+                            [-tag_size/2,  tag_size/2, 0],
+                            [ tag_size/2,  tag_size/2, 0],
+                            [ tag_size/2, -tag_size/2, 0],
+                            [-tag_size/2, -tag_size/2, 0]
+                        ], dtype=np.float32)
+                        
+                        zero_dist = np.zeros((4, 1), dtype=np.float32)
+                        for i in range(len(ids)):
+                            success, rvec, tvec = cv2.solvePnP(obj_pts, corners[i][0], camera_matrix, zero_dist)
+                            if success:
+                                # Draw custom axes: only X (red) and Y (green), no Z (blue)
+                                axis_length = tag_size / 2
+                                axis_points_3d = np.array([
+                                    [0, 0, 0],                    # Origin
+                                    [axis_length, 0, 0],          # X-axis (red)
+                                    [0, axis_length, 0]           # Y-axis (green)
+                                ], dtype=np.float32)
+                                
+                                axis_points_2d, _ = cv2.projectPoints(axis_points_3d, rvec, tvec, camera_matrix, zero_dist)
+                                axis_points_2d = axis_points_2d.astype(int)
+                                
+                                origin = tuple(axis_points_2d[0][0])
+                                x_end = tuple(axis_points_2d[1][0])
+                                y_end = tuple(axis_points_2d[2][0])
+                                
+                                # Draw X-axis (red)
+                                cv2.line(display_img, origin, x_end, (0, 0, 255), 2)
+                                # Draw Y-axis (green)
+                                cv2.line(display_img, origin, y_end, (0, 255, 0), 2)
+                                
+                                dist = np.linalg.norm(tvec)
+                                cv2.putText(display_img, f"Dist: {dist:.2f}m", 
+                                            (int(corners[i][0][0][0]), int(corners[i][0][0][1]) - 10), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+                    cv2.imshow(window_name, display_img)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
     except KeyboardInterrupt:
