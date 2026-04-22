@@ -63,6 +63,36 @@ else:
     print(f"Warning: could not load logo from {_LOGO_PATH}")
 _LOGO_MARGIN = 10   # pixels from edge
 
+# ── Load zone masks ───────────────────────────────────────────────────────────
+_ZONES_PATH = os.path.join(_THIS_DIR, "Zones")
+_zones: dict = {}  # {zone_id: {"name": str, "mask": np.ndarray, "mask_scaled": np.ndarray}}
+if os.path.exists(_ZONES_PATH):
+    print(f"Loading zones from: {_ZONES_PATH}")
+    for filename in sorted(os.listdir(_ZONES_PATH)):
+        if filename.endswith(".png"):
+            # Parse filename: "1_ZoneName.png" → id=1, name="ZoneName"
+            base = filename[:-4]  # remove .png
+            parts = base.split("_", 1)
+            if len(parts) == 2 and parts[0].isdigit():
+                zone_id = int(parts[0])
+                zone_name = parts[1]
+                zone_path = os.path.join(_ZONES_PATH, filename)
+                zone_img = cv2.imread(zone_path, cv2.IMREAD_UNCHANGED)
+                if zone_img is not None:
+                    # Scale to display dimensions
+                    zone_scaled = cv2.resize(zone_img, (DISP_W, DISP_H), interpolation=cv2.INTER_NEAREST)
+                    _zones[zone_id] = {"name": zone_name, "mask": zone_img, "mask_scaled": zone_scaled}
+                    print(f"  ✓ Zone {zone_id}: {zone_name} ({zone_img.shape})")
+                else:
+                    print(f"  ✗ Failed to load {filename}")
+else:
+    print(f"Note: Zones folder not found at {_ZONES_PATH}")
+
+if not _zones:
+    print("  (No zones loaded)")
+
+_current_zone: dict | None = None  # Currently active zone (if robot is in one)
+
 # ── Coordinate conversion helpers ────────────────────────────────────────────
 def world_to_px(wx: float, wy: float) -> tuple[int, int]:
     """World metres → display-image pixel (90° CW: world-y→image-x, world-x→image-y)."""
@@ -86,6 +116,40 @@ def display_to_api(wx: float, wy: float) -> tuple[float, float]:
     return api_x, api_y
 
 
+def _check_zone(rx: float, ry: float) -> dict | None:
+    """Check if robot is in any zone. Returns zone dict or None."""
+    if not _zones:
+        return None
+    
+    # Convert robot world coords to pixel coords
+    px, py = world_to_px(rx, ry)
+    
+    # Check each zone mask at the robot's pixel position
+    for zone_id, zone_data in sorted(_zones.items()):
+        mask = zone_data["mask"]
+        # Scale pixel coords to mask dimensions
+        scale_x = mask.shape[1] / DISP_W
+        scale_y = mask.shape[0] / DISP_H
+        mx = int(px * scale_x)
+        my = int(py * scale_y)
+        
+        # Clamp to mask bounds
+        if 0 <= mx < mask.shape[1] and 0 <= my < mask.shape[0]:
+            pixel = mask[my, mx]
+            # Check if pixel is not in the black/transparent region
+            # For any mask format, if it's not black/fully transparent, consider it active
+            if isinstance(pixel, np.ndarray):
+                # Multi-channel: check if any channel is significantly non-zero
+                if np.max(pixel[:3] if pixel.shape[0] >= 3 else pixel) > 1:
+                    return zone_data
+            else:
+                # Single channel (grayscale/alpha): check if non-zero
+                if pixel > 1:
+                    return zone_data
+    
+    return None
+
+
 # ── Robot state (updated from subscription callbacks) ────────────────────────
 _robot_lock = threading.Lock()
 _robot: dict = {"x": 0.0, "y": 0.0, "yaw": 0.0}
@@ -99,6 +163,49 @@ _LIDAR_OFFSET_Y = 0.0   # metres
 
 _lidar_lock = threading.Lock()
 _lidar_scan = {"angles": [], "ranges": [], "intensities": []}
+
+# ── Battery state ────────────────────────────────────────────────────────────
+_battery_lock = threading.Lock()
+_battery = {"level": 0.0, "voltage": 0.0}  # Battery percentage and voltage
+
+
+def _on_battery_telemetry(data, topic=None, *args, **kwargs):
+    """Battery telemetry callback – parse sensor_msgs/BatteryState from battery/status topic."""
+    # print(f"[DEBUG] _on_battery_telemetry called with topic={topic}, data={data}")
+    # Swap if parameters are reversed
+    if isinstance(data, str) and isinstance(topic, dict):
+        data, topic = topic, data
+    
+    if not isinstance(data, dict):
+        print("[DEBUG] Ignored: data is not a dict")
+        return
+    
+    # Accept if topic contains 'battery/status', or if topic is None but data looks like battery telemetry
+    if not ((topic and "battery/status" in topic) or (topic is None and "percentage" in data)):
+        print(f"[DEBUG] Ignored: topic does not contain 'battery/status' and data does not look like battery telemetry (topic={topic})")
+        return
+    # print(f"[DEBUG] Processing battery/status message: {data}")
+    # sensor_msgs/BatteryState has a 'percentage' field (0-100)
+    percentage = data.get("percentage")
+    voltage = data.get("voltage")
+    
+    if percentage is not None:
+        try:
+            level_float = float(percentage)
+            # If value is <= 1.0, treat as fraction and convert to percent
+            if level_float <= 1.0:
+                level_float *= 100.0
+            with _battery_lock:
+                _battery["level"] = level_float
+                if voltage is not None:
+                    try:
+                        _battery["voltage"] = float(voltage)
+                    except (ValueError, TypeError):
+                        pass
+            # print(f"[Battery] Level: {level_float:.1f}%, Voltage: {_battery['voltage']:.2f}V")
+            pass
+        except (ValueError, TypeError):
+            print(f"[DEBUG] Failed to parse percentage: {percentage}")
 
 
 def _on_lidar_scan(data, topic=None, *args, **kwargs):
@@ -196,8 +303,43 @@ ugv.subscribe_rotation(_on_rotation)
 d500 = cw.twin(twin_id=TWIN_LIDAR_UUID)
 d500.subscribe(_on_lidar_scan)
 
+# Subscribe to battery telemetry
+
+# Subscribe to battery telemetry via MQTT topic directly (sensor_msgs/BatteryState)
+if hasattr(cw, 'mqtt') and hasattr(cw.mqtt, 'subscribe'):
+    battery_topic = f"cyberwave/twin/{TWIN_UUID}/battery/status"
+    cw.mqtt.subscribe(battery_topic, _on_battery_telemetry)
+    print(f"Subscribed to battery topic: {battery_topic}")
+else:
+    ugv.subscribe(_on_battery_telemetry)
+    print("Subscribed to battery telemetry via ugv.subscribe (fallback)")
+
+
 print("Connected to UGV twin. Subscribing to position/rotation...")
 print(f"Connected to Lidar twin {TWIN_LIDAR_UUID}. Subscribing to scans...")
+print("Subscribing to battery telemetry...")
+
+
+# --- Periodically trigger battery status update ---
+import time
+def _battery_check_loop():
+    battery_cmd_topic = f"cyberwave/twin/{TWIN_UUID}/command"
+    battery_cmd_payload = {
+        "command": "battery_check",
+        "data": {},
+        "source_type": "tele"
+    }
+    while True:
+        if hasattr(cw, 'mqtt') and hasattr(cw.mqtt, 'publish'):
+            # print(f"[DEBUG] Publishing battery_check command to {battery_cmd_topic} with payload {battery_cmd_payload}")
+            cw.mqtt.publish(battery_cmd_topic, json.dumps(battery_cmd_payload))
+        else:
+            # print("[DEBUG] MQTT publish not available on cw.mqtt")
+            pass
+        time.sleep(15)
+
+_battery_check_thread = threading.Thread(target=_battery_check_loop, daemon=True)
+_battery_check_thread.start()
 
 # ── Drag state ───────────────────────────────────────────────────────────────
 _drag: dict = {"active": False, "start": None, "end": None}
@@ -296,7 +438,7 @@ def _on_mouse(event, x, y, flags, param):
 
 # ── Drawing helpers ──────────────────────────────────────────────────────────
 _FONT      = cv2.FONT_HERSHEY_SIMPLEX
-_COL_ROBOT = (0, 220, 0)        # green
+_COL_ROBOT = (0, 0, 0)        # black
 _COL_GOAL  = (0, 140, 255)      # orange
 _COL_GRID  = (180, 60, 60)      # slate-blue  – visible on both white & black map
 _COL_AXIS  = (220, 100, 100)    # brighter blue for the zero axes
@@ -447,8 +589,40 @@ def _draw_logo(frame: np.ndarray):
     frame[y1:y2, x1:x2] = blended
 
 
+
+
+
+
+def _draw_zone_mask(frame: np.ndarray, zone_data: dict):
+    """Composite zone mask with 40% opacity underneath the robot marker."""
+    mask_scaled = zone_data["mask_scaled"]
+    if mask_scaled is None or mask_scaled.shape[:2] != (DISP_H, DISP_W):
+        return
+    
+    # Extract color channels and create a mask of active pixels
+    if mask_scaled.ndim == 3:
+        if mask_scaled.shape[2] >= 3:
+            mask_bgr = mask_scaled[:, :, :3].astype(np.float32)
+            zone_pixels = np.any(mask_scaled[:, :, :3] > 1, axis=2)
+        else:
+            mask_bgr = cv2.cvtColor(mask_scaled[:, :, 0], cv2.COLOR_GRAY2BGR).astype(np.float32)
+            zone_pixels = mask_scaled[:, :, 0] > 1
+    else:
+        # Grayscale: convert to BGR
+        mask_bgr = cv2.cvtColor(mask_scaled, cv2.COLOR_GRAY2BGR).astype(np.float32)
+        zone_pixels = mask_scaled > 1
+    
+    # Apply 40% opacity blend
+    zone_opacity = 0.4
+    frame_f = frame.astype(np.float32)
+    blended = (mask_bgr * zone_opacity + frame_f * (1.0 - zone_opacity)).astype(np.uint8)
+    
+    # Apply blended color only where zone pixels are non-black
+    frame[zone_pixels] = blended[zone_pixels]
+
+
 def _draw_hud(frame: np.ndarray):
-    """Bottom-left status / legend bar."""
+    """Bottom-left status / legend bar, zone name, and battery indicator."""
     h = frame.shape[0]
     lines = [
         "Shift+drag -> goto target",
@@ -458,6 +632,38 @@ def _draw_hud(frame: np.ndarray):
     for i, txt in enumerate(reversed(lines)):
         cv2.putText(frame, txt, (6, h - 8 - 16 * i),
                     _FONT, 0.38, _COL_HUD, 1, cv2.LINE_AA)
+    
+
+    # Display zone name if robot is in a zone
+    y_pos = 40
+    if _current_zone is not None:
+        zone_name = _current_zone.get("name", "Unknown")
+        cv2.putText(frame, f"Zone: {zone_name}", (6, y_pos),
+                    _FONT, 1.0, (50, 200, 100), 1, cv2.LINE_AA)
+        y_pos += 20
+
+    # Draw large battery bar under the zone label
+    bar_w, bar_h = 220, 32
+    x_pos, y_pos_bat = 6, y_pos + 8
+    # Background
+    cv2.rectangle(frame, (x_pos, y_pos_bat), (x_pos + bar_w, y_pos_bat + bar_h), (60, 60, 60), -1)
+    # Border
+    cv2.rectangle(frame, (x_pos, y_pos_bat), (x_pos + bar_w, y_pos_bat + bar_h), (150, 150, 150), 2)
+    with _battery_lock:
+        battery_level = _battery["level"]
+    if battery_level > 50:
+        battery_color = (0, 255, 0)  # Green
+    elif battery_level > 25:
+        battery_color = (0, 165, 255)  # Orange
+    elif battery_level > 0:
+        battery_color = (0, 0, 255)  # Red
+    else:
+        battery_color = (100, 100, 100)  # Gray (no data)
+    if battery_level > 0:
+        fill_w = int(bar_w * battery_level / 100.0)
+        cv2.rectangle(frame, (x_pos, y_pos_bat), (x_pos + fill_w, y_pos_bat + bar_h), battery_color, -1)
+    label = f"Battery: {battery_level:.0f}%" if battery_level > 0 else "Battery: --"
+    cv2.putText(frame, label, (x_pos + 12, y_pos_bat + bar_h - 8), _FONT, 0.85, (255, 255, 255), 2, cv2.LINE_AA)
 
 
 # ── Main loop ────────────────────────────────────────────────────────────────
@@ -473,6 +679,14 @@ try:
     while True:
         frame = cv2.resize(_BASE_IMG, (DISP_W, DISP_H), interpolation=cv2.INTER_NEAREST)
         _draw_grid(frame)
+        
+        # Check and draw zone
+        with _robot_lock:
+            rx, ry = _robot["x"], _robot["y"]
+        _current_zone = _check_zone(rx, ry)
+        if _current_zone is not None:
+            _draw_zone_mask(frame, _current_zone)
+        
         _draw_last_goal(frame)
         _draw_drag_arrow(frame)
         _draw_lidar_scan(frame)
