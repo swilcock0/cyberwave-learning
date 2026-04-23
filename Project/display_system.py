@@ -194,6 +194,7 @@ class DisplaySystem(ctk.CTk):
         self.actual_camera_light_value = 0
         self.actual_pan_rad = 0.0
         self.actual_tilt_rad = 0.0
+        self.last_camera_cmd_time = 0.0
         
         # Initialize MQTT subscription using SDK's authenticated client
         self._setup_mqtt_subscription()
@@ -221,14 +222,14 @@ class DisplaySystem(ctk.CTk):
             try:
                 uuid = mn.ugv.uuid
                 lights_topic = f"cyberwave/twin/{uuid}/lights/status"
-                camera_topic = f"cyberwave/twin/{uuid}/camera_servo/status"
                 
                 mqtt_client.subscribe(lights_topic)
-                mqtt_client.subscribe(camera_topic)
-                
                 print(f"[MQTT] Subscribed to: {lights_topic}")
-                print(f"[MQTT] Subscribed to: {camera_topic}")
                 print("[MQTT] Using SDK's authenticated MQTT client")
+                
+                # Use SDK native subscription for joint states (Pan and Tilt mechanisms)
+                mn.ugv.subscribe_joints(self._on_joint_state)
+                print("[SDK] Subscribed to joint states for camera orientation tracking")
             except Exception as e:
                 print(f"[MQTT] Subscription error: {e}")
                 import traceback
@@ -237,6 +238,48 @@ class DisplaySystem(ctk.CTk):
             print(f"[MQTT] Failed to setup subscription: {e}")
             import traceback
             traceback.print_exc()
+
+    def _on_joint_state(self, payload, *args, **kwargs):
+        """Process incoming joint state to capture camera pan and tilt"""
+        try:
+            # Robustly handle different SDK callback signatures
+            if isinstance(payload, str) and len(args) > 0 and isinstance(args[0], dict):
+                payload = args[0]
+            elif isinstance(payload, (list, tuple)) and len(payload) == 2 and isinstance(payload[0], dict):
+                payload = payload[0]
+
+            if not isinstance(payload, dict):
+                return
+            
+            joint_name = payload.get("joint_name")
+            joint_state = payload.get("joint_state", {})
+            position = joint_state.get("position")
+            
+            if position is None:
+                return
+
+            updated = False
+            # Pan joint
+            if joint_name == "pt_base_link_to_pt_link1":
+                self.actual_pan_rad = float(position)
+                updated = True
+            # Tilt joint
+            elif joint_name == "pt_link1_to_pt_link2":
+                self.actual_tilt_rad = float(position)
+                updated = True
+                
+            if updated:
+                pan_deg = math.degrees(self.actual_pan_rad)
+                tilt_deg = math.degrees(self.actual_tilt_rad)
+                
+                # Update map rendering with the camera's pan angle
+                with mn._robot_lock:
+                    mn._robot["camera_yaw"] = self.actual_pan_rad
+                
+                # Queue UI update on main thread - update sliders AND direction
+                self.after(0, lambda pd=pan_deg, td=tilt_deg: self._update_camera_sliders_from_hardware(pd, td))
+        except Exception as e:
+            print(f"[Joints] Error processing joint state: {e}")
 
     def _on_mqtt_message(self, client, userdata, msg):
         """Process incoming MQTT status messages"""
@@ -253,29 +296,23 @@ class DisplaySystem(ctk.CTk):
                     print(f"[MQTT] Lights Status: chassis={self.actual_chassis_light_value}, camera={self.actual_camera_light_value}")
                     # Queue UI update on main thread
                     self.after(0, self._update_hardware_status_display)
-            
-            # Handle camera servo status
-            elif "/camera_servo/status" in topic:
-                if "data" in payload:
-                    data = payload["data"]
-                    self.actual_pan_rad = float(data.get("pan", 0.0))
-                    self.actual_tilt_rad = float(data.get("tilt", 0.0))
-                    pan_deg = math.degrees(self.actual_pan_rad)
-                    tilt_deg = math.degrees(self.actual_tilt_rad)
-                    print(f"[MQTT] Camera Status: pan={pan_deg:.1f}°, tilt={tilt_deg:.1f}°")
-                    # Queue UI update on main thread - update sliders AND direction
-                    self.after(0, lambda pd=pan_deg, td=tilt_deg: self._update_camera_sliders_from_hardware(pd, td))
         except Exception as e:
             print(f"[MQTT] Error processing message: {e}")
 
     def _update_camera_sliders_from_hardware(self, pan_deg, tilt_deg):
         """Update camera sliders to match actual hardware position"""
         try:
-            # Update slider values to show actual hardware position
-            # This will trigger callbacks, but that's OK - we're just confirming position
-            self.pan_slider.set(pan_deg)
-            self.tilt_slider.set(tilt_deg)
-            # Also update direction display
+            # Debounce: don't overwrite user's drag if we recently sent a command
+            if time.time() - getattr(self, 'last_camera_cmd_time', 0.0) >= 1.5:
+                # Update slider values to show actual hardware position
+                self.pan_slider.set(pan_deg)
+                self.tilt_slider.set(tilt_deg)
+                
+                # Explicitly update textual labels because .set() does not trigger slider commands in CustomTkinter
+                self.pan_value_label.configure(text=f"{int(pan_deg)}°")
+                self.tilt_value_label.configure(text=f"{int(tilt_deg)}°")
+            
+            # Also update direction display (shows Cmd vs Actual while moving)
             self.update_camera_direction()
         except Exception as e:
             print(f"[MQTT] Error updating camera sliders: {e}")
@@ -362,6 +399,7 @@ class DisplaySystem(ctk.CTk):
 
     def send_camera_command(self, pan_deg, tilt_deg):
         """Send camera servo command via MQTT"""
+        self.last_camera_cmd_time = time.time()
         try:
             pan_rad = self.degrees_to_radians(pan_deg)
             tilt_rad = self.degrees_to_radians(tilt_deg)
