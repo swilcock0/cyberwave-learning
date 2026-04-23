@@ -1,2 +1,3 @@
-TWIN_UUID = "your-lidar-twin-uuid-here"  # Replace with your actual Lidar twin UUID
-ENVIRONMENT_UUID = "your-environment-uuid-here"  # Replace with your actual environment UUID
+TWIN_UUID = "40797a0a-9824-4fec-bf24-b4bd4757a13c"
+TWIN_LIDAR_UUID = "f03f7b88-591d-44c3-8e92-f903d20be111"
+ENVIRONMENT_UUID = "7423dae7-0587-4ad9-892a-6144fb9838f3"

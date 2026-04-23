@@ -171,20 +171,34 @@ if not _zones:
 # ── AprilTag marker definitions ─────────────────────────────────────────────
 # Each tag: id, size (m), x, y, heading_hint (dx, dy)
 APRILTAG_MARKERS = [
-    {
+    { #Charging
+        "id": 0,
+        "size_m": 0.2,  # 200mm
+        "x": -2.070,
+        "y": -3.905,
+        "heading_hint": {"dx": 71, "dy": -46},
+    },
+        { # Bedroom
+        "id": 1,
+        "size_m": 0.2,  # 200mm
+        "x": 4.11,
+        "y": 2.32,
+        "heading_hint": {"dx": -46, "dy": -76},
+    },
+    { #Hallway
         "id": 2,
         "size_m": 0.2,  # 200mm
         "x": 1.23,
         "y": 0.145,
         "heading_hint": {"dx": 60, "dy": -36},
     },
-    {
-        "id": 1,
+    { #Shower
+        "id": 3,
         "size_m": 0.2,  # 200mm
-        "x": 4.11,
-        "y": 2.32,
-        "heading_hint": {"dx": -46, "dy": -76},
-    }
+        "x": 0.860,
+        "y": 1.175,
+        "heading_hint": {"dx": -64, "dy": 41},
+    },
     # Add more tags here as needed
 ]
 
@@ -424,6 +438,7 @@ def _on_mouse(event, x, y, flags, param):
     global _last_goal
     is_ctrl_down = flags & cv2.EVENT_FLAG_CTRLKEY
     is_shift_down = flags & cv2.EVENT_FLAG_SHIFTKEY
+    is_alt_down = flags & cv2.EVENT_FLAG_ALTKEY
     
     if event == cv2.EVENT_LBUTTONDOWN:
         _drag["active"] = True
@@ -508,6 +523,14 @@ def _on_mouse(event, x, y, flags, param):
                 f"→ goto ({api_x:+.3f}, {api_y:+.3f}) "
                 f"heading={math.degrees(api_yaw):+.1f}°  |  resp: {resp}"
             )
+        elif is_alt_down:
+            # Alt+Click: Print world coordinates and heading hint for AprilTag placement
+            dx, dy = ex - sx, ey - sy
+            print(f"-- AprilTag Placement --\n"
+                  f"\"x\": {tx:.3f},\n"
+                  f"\"y\": {ty:.3f},\n"
+                  f"\"heading_hint\": {{\"dx\": {dx}, \"dy\": {dy}}}")
+            
         _drag["start"] = _drag["end"] = None
 
 
@@ -699,6 +722,7 @@ def _draw_hud(frame: np.ndarray):
     lines = [
         "Shift+drag -> goto target",
         "Ctrl+drag -> set initial pose",
+        "Alt+drag   -> print AprilTag info",
         "S = stop robot   Q / Esc = quit",
     ]
     for i, txt in enumerate(reversed(lines)):

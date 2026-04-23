@@ -211,124 +211,126 @@ fetch_thread = threading.Thread(target=_fetch_loop, daemon=True)
 fetch_thread.start()
 
 # OpenCV display runs on the main thread (required on Windows)
-if cv2 is None or np is None:
-    print("OpenCV or numpy not available; skipping video display.")
-    try:
-        while not stop_event.is_set():
-            time.sleep(0.1)
-    except KeyboardInterrupt:
-        pass
-else:
-    window_name = "UGV Camera"
-    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    try:
-        while True:
-            raw_bytes = latest_frame["bytes"]
-            if raw_bytes:
-                arr = np.frombuffer(raw_bytes, dtype=np.uint8)
-                img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                if img is not None:
-                    # Display image without distortion correction
-                    display_img = img.copy()
-                        
-                    # --- AprilTag Detection ---
-                    if aruco_dict is not None:
-                        gray = cv2.cvtColor(display_img, cv2.COLOR_BGR2GRAY)
-                        
-                        # Apply CLAHE to boost contrast
-                        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
-                        gray_boost = clahe.apply(gray)
-                        
-                        # Apply Unsharp Mask to sharpen edges
-                        blur = cv2.GaussianBlur(gray_boost, (0, 0), 3)
-                        sharp_gray = cv2.addWeighted(gray_boost, 2.0, blur, -1.0, 0)
+def main():
+    if cv2 is None or np is None:
+        print("OpenCV or numpy not available; skipping video display.")
+        try:
+            while not stop_event.is_set():
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            pass
+    else:
+        window_name = "UGV Camera"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        try:
+            while True:
+                raw_bytes = latest_frame["bytes"]
+                if raw_bytes:
+                    arr = np.frombuffer(raw_bytes, dtype=np.uint8)
+                    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                    if img is not None:
+                        # Display image without distortion correction
+                        display_img = img.copy()
+                            
+                        # --- AprilTag Detection ---
+                        if aruco_dict is not None:
+                            gray = cv2.cvtColor(display_img, cv2.COLOR_BGR2GRAY)
+                            
+                            # Apply CLAHE to boost contrast
+                            clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+                            gray_boost = clahe.apply(gray)
+                            
+                            # Apply Unsharp Mask to sharpen edges
+                            blur = cv2.GaussianBlur(gray_boost, (0, 0), 3)
+                            sharp_gray = cv2.addWeighted(gray_boost, 2.0, blur, -1.0, 0)
 
-                        if aruco_detector is not None:
-                            corners, ids, rejected = aruco_detector.detectMarkers(sharp_gray)
+                            if aruco_detector is not None:
+                                corners, ids, rejected = aruco_detector.detectMarkers(sharp_gray)
+                            else:
+                                corners, ids, rejected = cv2.aruco.detectMarkers(sharp_gray, aruco_dict, parameters=aruco_params)
                         else:
-                            corners, ids, rejected = cv2.aruco.detectMarkers(sharp_gray, aruco_dict, parameters=aruco_params)
-                    else:
-                        ids = None
+                            ids = None
 
-                    if ids is not None and len(ids) > 0:
-                        # Draw detected markers
-                        cv2.aruco.drawDetectedMarkers(display_img, corners)
-                        
-                        # Draw tag numbers in white
-                        for i in range(len(ids)):
-                            corners_pts = corners[i][0].astype(int)
-                            center_x = int(np.mean(corners_pts[:, 0])+20)
-                            center_y = int(np.mean(corners_pts[:, 1]))
-                            cv2.putText(display_img, str(ids[i][0]), (center_x - 10, center_y + 5),
-                                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                        
-                        # Pose estimation with default camera matrix (no calibration)
-                        # Calculate focal length from camera FOV (170 degrees horizontal)
-                        h, w = display_img.shape[:2]
-                        fov_degrees = 118.0
-                        fov_radians = math.radians(fov_degrees / 2.0)
-                        focal_length = (w / 2.0) / math.tan(fov_radians)
-                        center = (w / 2.0, h / 2.0)
-                        camera_matrix = np.array([
-                            [focal_length, 0, center[0]],
-                            [0, focal_length, center[1]],
-                            [0, 0, 1]
-                        ], dtype=np.float32)
-                        
-                        tag_size = 0.2
-                        obj_pts = np.array([
-                            [-tag_size/2,  tag_size/2, 0],
-                            [ tag_size/2,  tag_size/2, 0],
-                            [ tag_size/2, -tag_size/2, 0],
-                            [-tag_size/2, -tag_size/2, 0]
-                        ], dtype=np.float32)
-                        
-                        zero_dist = np.zeros((4, 1), dtype=np.float32)
-                        for i in range(len(ids)):
-                            success, rvec, tvec = cv2.solvePnP(obj_pts, corners[i][0], camera_matrix, zero_dist)
-                            if success:
-                                # Draw custom axes: only X (red) and Y (green), no Z (blue)
-                                axis_length = tag_size / 2
-                                axis_points_3d = np.array([
-                                    [0, 0, 0],                    # Origin
-                                    [axis_length, 0, 0],          # X-axis (red)
-                                    [0, axis_length, 0]           # Y-axis (green)
-                                ], dtype=np.float32)
-                                
-                                axis_points_2d, _ = cv2.projectPoints(axis_points_3d, rvec, tvec, camera_matrix, zero_dist)
-                                axis_points_2d = axis_points_2d.astype(int)
-                                
-                                origin = tuple(axis_points_2d[0][0])
-                                x_end = tuple(axis_points_2d[1][0])
-                                y_end = tuple(axis_points_2d[2][0])
-                                
-                                # Draw X-axis (red)
-                                cv2.line(display_img, origin, x_end, (0, 0, 255), 2)
-                                # Draw Y-axis (green)
-                                cv2.line(display_img, origin, y_end, (0, 255, 0), 2)
-                                
-                                dist = np.linalg.norm(tvec)
-                                cv2.putText(display_img, f"Dist: {dist:.2f}m", 
-                                            (int(corners[i][0][0][0]), int(corners[i][0][0][1]) - 10), 
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        if ids is not None and len(ids) > 0:
+                            # Draw detected markers
+                            cv2.aruco.drawDetectedMarkers(display_img, corners)
+                            
+                            # Draw tag numbers in white
+                            for i in range(len(ids)):
+                                corners_pts = corners[i][0].astype(int)
+                                center_x = int(np.mean(corners_pts[:, 0])+20)
+                                center_y = int(np.mean(corners_pts[:, 1]))
+                                cv2.putText(display_img, str(ids[i][0]), (center_x - 10, center_y + 5),
+                                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                            
+                            # Pose estimation with default camera matrix (no calibration)
+                            # Calculate focal length from camera FOV (170 degrees horizontal)
+                            h, w = display_img.shape[:2]
+                            fov_degrees = 118.0
+                            fov_radians = math.radians(fov_degrees / 2.0)
+                            focal_length = (w / 2.0) / math.tan(fov_radians)
+                            center = (w / 2.0, h / 2.0)
+                            camera_matrix = np.array([
+                                [focal_length, 0, center[0]],
+                                [0, focal_length, center[1]],
+                                [0, 0, 1]
+                            ], dtype=np.float32)
+                            
+                            tag_size = 0.2
+                            obj_pts = np.array([
+                                [-tag_size/2,  tag_size/2, 0],
+                                [ tag_size/2,  tag_size/2, 0],
+                                [ tag_size/2, -tag_size/2, 0],
+                                [-tag_size/2, -tag_size/2, 0]
+                            ], dtype=np.float32)
+                            
+                            zero_dist = np.zeros((4, 1), dtype=np.float32)
+                            for i in range(len(ids)):
+                                success, rvec, tvec = cv2.solvePnP(obj_pts, corners[i][0], camera_matrix, zero_dist)
+                                if success:
+                                    # Draw custom axes: only X (red) and Y (green), no Z (blue)
+                                    axis_length = tag_size / 2
+                                    axis_points_3d = np.array([
+                                        [0, 0, 0],                    # Origin
+                                        [axis_length, 0, 0],          # X-axis (red)
+                                        [0, axis_length, 0]           # Y-axis (green)
+                                    ], dtype=np.float32)
+                                    
+                                    axis_points_2d, _ = cv2.projectPoints(axis_points_3d, rvec, tvec, camera_matrix, zero_dist)
+                                    axis_points_2d = axis_points_2d.astype(int)
+                                    
+                                    origin = tuple(axis_points_2d[0][0])
+                                    x_end = tuple(axis_points_2d[1][0])
+                                    y_end = tuple(axis_points_2d[2][0])
+                                    
+                                    # Draw X-axis (red)
+                                    cv2.line(display_img, origin, x_end, (0, 0, 255), 2)
+                                    # Draw Y-axis (green)
+                                    cv2.line(display_img, origin, y_end, (0, 255, 0), 2)
+                                    
+                                    dist = np.linalg.norm(tvec)
+                                    cv2.putText(display_img, f"Dist: {dist:.2f}m", 
+                                                (int(corners[i][0][0][0]), int(corners[i][0][0][1]) - 10), 
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-                    cv2.imshow(window_name, display_img)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-    except KeyboardInterrupt:
-        pass
-    finally:
-        stop_event.set()
+                        cv2.imshow(window_name, display_img)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+        except KeyboardInterrupt:
+            pass
+        finally:
+            stop_event.set()
 
-
-stop_event.set()
-try:
-    fetch_thread.join(timeout=1)
-except Exception:
-    pass
-if cv2 is not None:
+if __name__ == "__main__":
+    main()
+    stop_event.set()
     try:
-        cv2.destroyAllWindows()
+        fetch_thread.join(timeout=1)
     except Exception:
         pass
-cw.disconnect()
+    if cv2 is not None:
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
+    cw.disconnect()
