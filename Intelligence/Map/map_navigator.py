@@ -61,6 +61,24 @@ if _LOGO_BGRA is not None:
         _LOGO_BGRA = cv2.cvtColor(_LOGO_BGRA, cv2.COLOR_BGR2BGRA)
 else:
     print(f"Warning: could not load logo from {_LOGO_PATH}")
+
+# ── Load circle logo (smaller, positioned below main logo) ───────────────────
+_LOGO_CIRCLE_PATH = os.path.join(_THIS_DIR, "LogoCircleBW.png")
+_LOGO_CIRCLE_BGRA = cv2.imread(_LOGO_CIRCLE_PATH, cv2.IMREAD_UNCHANGED)  # may be BGR or BGRA
+if _LOGO_CIRCLE_BGRA is not None:
+    # Scale circle logo smaller than main logo (~40% of main logo width)
+    _circle_target_w = max(50, int(DISP_W * 0.10))
+    _circle_h, _circle_w = _LOGO_CIRCLE_BGRA.shape[:2]
+    _circle_scale = _circle_target_w / _circle_w
+    _circle_target_h = int(_circle_h * _circle_scale)
+    _LOGO_CIRCLE_BGRA = cv2.resize(_LOGO_CIRCLE_BGRA, (_circle_target_w, _circle_target_h), interpolation=cv2.INTER_AREA)
+    # If no alpha channel, add one (fully opaque)
+    if _LOGO_CIRCLE_BGRA.shape[2] == 3:
+        _LOGO_CIRCLE_BGRA = cv2.cvtColor(_LOGO_CIRCLE_BGRA, cv2.COLOR_BGR2BGRA)
+else:
+    _LOGO_CIRCLE_BGRA = None
+    print(f"Warning: could not load circle logo from {_LOGO_CIRCLE_PATH}")
+
 _LOGO_MARGIN = 10   # pixels from edge
 
 # ── Coordinate conversion helpers ────────────────────────────────────────────
@@ -670,21 +688,42 @@ def _draw_drag_arrow(frame: np.ndarray):
 
 
 def _draw_logo(frame: np.ndarray):
-    """Composite the Cyberwave logo into the top-right corner."""
+    """Composite the Cyberwave logo and circle logo into the top-right corner."""
     if _LOGO_BGRA is None:
         return
+    
     lh, lw = _LOGO_BGRA.shape[:2]
     x1 = frame.shape[1] - lw - _LOGO_MARGIN
     y1 = _LOGO_MARGIN
     x2, y2 = x1 + lw, y1 + lh
+    
     # Clamp to frame bounds
     if x1 < 0 or y1 < 0 or x2 > frame.shape[1] or y2 > frame.shape[0]:
         return
+    
+    # Draw main Cyberwave logo
     logo_bgr   = _LOGO_BGRA[:, :, :3].astype(np.float32)
     alpha_mask = (_LOGO_BGRA[:, :, 3] / 255.0).astype(np.float32)[:, :, np.newaxis]
     roi = frame[y1:y2, x1:x2].astype(np.float32)
     blended = (logo_bgr * alpha_mask + roi * (1.0 - alpha_mask)).astype(np.uint8)
     frame[y1:y2, x1:x2] = blended
+    
+    # Draw circle logo underneath (if available)
+    if _LOGO_CIRCLE_BGRA is not None:
+        ch, cw = _LOGO_CIRCLE_BGRA.shape[:2]
+        # Right-align circle logo to match main logo
+        circle_x1 = frame.shape[1] - cw - _LOGO_MARGIN
+        circle_y1 = y2 + _LOGO_MARGIN  # Position below main logo
+        circle_x2 = circle_x1 + cw
+        circle_y2 = circle_y1 + ch
+        
+        # Clamp to frame bounds
+        if circle_x1 >= 0 and circle_y1 >= 0 and circle_x2 <= frame.shape[1] and circle_y2 <= frame.shape[0]:
+            circle_bgr   = _LOGO_CIRCLE_BGRA[:, :, :3].astype(np.float32)
+            circle_alpha = (_LOGO_CIRCLE_BGRA[:, :, 3] / 255.0).astype(np.float32)[:, :, np.newaxis]
+            circle_roi = frame[circle_y1:circle_y2, circle_x1:circle_x2].astype(np.float32)
+            circle_blended = (circle_bgr * circle_alpha + circle_roi * (1.0 - circle_alpha)).astype(np.uint8)
+            frame[circle_y1:circle_y2, circle_x1:circle_x2] = circle_blended
 
 
 

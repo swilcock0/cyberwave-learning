@@ -26,19 +26,17 @@ try:
         except:
             aruco_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
         
-        # Try lowering this to accept slightly distorted quads
-        aruco_params.maxErroneousBitsInBorderRate = 0.8
+        # EXTREMELY lenient on border bits (ignores noisy black/white borders)
+        aruco_params.maxErroneousBitsInBorderRate = 0.95
         
-        # Robustness: Accept more deformed/jagged quads (default is 0.03)
-        # This helps when interpolation makes the straight lines look wavy/jagged
-        aruco_params.polygonalApproxAccuracyRate = 0.055
+        # EXTREMELY lenient on quad shape (higher = permits highly warped/wavy edges)
+        aruco_params.polygonalApproxAccuracyRate = 0.09
         
-        # Robustness: Catch skinnier/smaller tags that get compressed at the edges
-        aruco_params.minMarkerPerimeterRate = 0.015
+        # Accept very small tags
+        aruco_params.minMarkerPerimeterRate = 0.01
         
-        # Robustness: Boost the internal payload error correction to recover blurry bits
-        aruco_params.errorCorrectionRate = 0.9
-        
+        # Max out payload error correction
+        aruco_params.errorCorrectionRate = 1.0
         if hasattr(cv2.aruco, 'ArucoDetector'):
             aruco_detector = cv2.aruco.ArucoDetector(aruco_dict, aruco_params)
         else:
@@ -236,18 +234,31 @@ def main():
                         if aruco_dict is not None:
                             gray = cv2.cvtColor(display_img, cv2.COLOR_BGR2GRAY)
                             
-                            # Apply CLAHE to boost contrast
-                            clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
-                            gray_boost = clahe.apply(gray)
+                            # Dynamic Brightness: Fixes tags washing out when the physical LED is ON
+                            # Evaluate lighting based on the center of the image where the LED casts its beam
+                            h, w = gray.shape
+                            crop_y, crop_x = h // 4, w // 4
+                            center_roi = gray[crop_y : h - crop_y, crop_x : w - crop_x]
+                            center_brightness = cv2.mean(center_roi)[0]
                             
-                            # Apply Unsharp Mask to sharpen edges
-                            blur = cv2.GaussianBlur(gray_boost, (0, 0), 3)
-                            sharp_gray = cv2.addWeighted(gray_boost, 2.0, blur, -1.0, 0)
-
-                            if aruco_detector is not None:
-                                corners, ids, rejected = aruco_detector.detectMarkers(sharp_gray)
+                            if center_brightness < 90:
+                                # Image is dark (LED OFF): boost overall brightness
+                                gray_adj = cv2.convertScaleAbs(gray, alpha=1.3, beta=40)
+                            elif center_brightness > 150:
+                                # Image is washed out/glare in the center: darken to recover contrast
+                                gray_adj = cv2.convertScaleAbs(gray, alpha=0.8, beta=-30)
                             else:
-                                corners, ids, rejected = cv2.aruco.detectMarkers(sharp_gray, aruco_dict, parameters=aruco_params)
+                                # Normal lighting
+                                gray_adj = gray
+                            
+                            # Apply CLAHE for local contrast balancing
+                            clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+                            processed_gray = clahe.apply(gray_adj)
+                            
+                            if aruco_detector is not None:
+                                corners, ids, rejected = aruco_detector.detectMarkers(processed_gray)
+                            else:
+                                corners, ids, rejected = cv2.aruco.detectMarkers(processed_gray, aruco_dict, parameters=aruco_params)
                         else:
                             ids = None
 

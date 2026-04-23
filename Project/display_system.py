@@ -14,9 +14,13 @@ import threading
 import numpy as np
 import time
 import math
+import json
 
 # Import shared state/drawing functions from map_navigator
 from Intelligence.Map import map_navigator as mn
+
+# Import MQTT client for subscribing to hardware status
+import paho.mqtt.client as mqtt
 
 # Import Apriltag globals
 from Tutorials.CameraStream import ApriltagQuick as aq
@@ -64,12 +68,32 @@ class DisplaySystem(ctk.CTk):
         lights_frame.grid(row=0, column=0, sticky="ew")
 
         self.chassis_light_on = False
-        self.btn_chassis = ctk.CTkButton(lights_frame, text="Toggle Chassis Light", command=self.toggle_chassis_light)
+        self.btn_chassis = ctk.CTkButton(
+            lights_frame, 
+            text="🔦 Chassis",
+            fg_color="gray30",
+            command=self.toggle_chassis_light
+        )
         self.btn_chassis.pack(side="left", padx=5, expand=True, fill="x")
 
         self.camera_light_on = False
-        self.btn_camera = ctk.CTkButton(lights_frame, text="Toggle Camera Light", command=self.toggle_camera_light)
+        self.btn_camera = ctk.CTkButton(
+            lights_frame,
+            text="💡 Camera",
+            fg_color="gray30",
+            command=self.toggle_camera_light
+        )
         self.btn_camera.pack(side="right", padx=5, expand=True, fill="x")
+        
+        # Light status display (actual hardware state)
+        status_frame = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
+        status_frame.grid(row=0, column=1, sticky="ns", padx=5)
+        
+        self.chassis_status_label = ctk.CTkLabel(status_frame, text="Chassis: OFF", font=("Arial", 8), text_color="gray")
+        self.chassis_status_label.pack(side="top", padx=2, pady=1)
+        
+        self.camera_status_label = ctk.CTkLabel(status_frame, text="Camera: OFF", font=("Arial", 8), text_color="gray")
+        self.camera_status_label.pack(side="top", padx=2, pady=1)
 
         # Camera pan control
         pan_frame = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
@@ -117,6 +141,18 @@ class DisplaySystem(ctk.CTk):
         self.tilt_value_label = ctk.CTkLabel(tilt_frame, text="0°", font=("Arial", 9), width=40)
         self.tilt_value_label.grid(row=0, column=2, padx=5)
 
+        # Camera direction display (below sliders)
+        direction_frame = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
+        direction_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=5)
+
+        self.direction_label = ctk.CTkLabel(
+            direction_frame,
+            text="Direction: Forward",
+            font=("Arial", 9),
+            text_color="cyan"
+        )
+        self.direction_label.pack(side="left", padx=5)
+
         # Reset to center button (right side, spanning pan & tilt rows)
         reset_button_frame = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
         reset_button_frame.grid(row=1, column=1, rowspan=2, sticky="ns", padx=5)
@@ -153,11 +189,96 @@ class DisplaySystem(ctk.CTk):
         # Background thread control
         self.stop_event = threading.Event()
 
+        # Actual hardware state (from MQTT status messages)
+        self.actual_chassis_light_value = 0
+        self.actual_camera_light_value = 0
+        self.actual_pan_rad = 0.0
+        self.actual_tilt_rad = 0.0
+        
+        # Initialize MQTT subscription using SDK's authenticated client
+        self._setup_mqtt_subscription()
+
         # Key bindings
         self.bind("<Key>", self.on_keypress)
 
         # We rely on their background threads doing the updates, we just loop for UI drawing
+        self.update_camera_direction()  # Initialize camera direction display
         self.update_views()
+
+    def _setup_mqtt_subscription(self):
+        """Setup MQTT subscriptions using the SDK's authenticated client"""
+        try:
+            # Use the SDK's already-authenticated MQTT client
+            mqtt_client = mn.ugv.client.mqtt
+            if not mqtt_client:
+                print("[MQTT] SDK MQTT client not available")
+                return
+            
+            # Set up our callback handlers
+            mqtt_client.on_message = self._on_mqtt_message
+            
+            # Subscribe to status topics
+            try:
+                uuid = mn.ugv.uuid
+                lights_topic = f"cyberwave/twin/{uuid}/lights/status"
+                camera_topic = f"cyberwave/twin/{uuid}/camera_servo/status"
+                
+                mqtt_client.subscribe(lights_topic)
+                mqtt_client.subscribe(camera_topic)
+                
+                print(f"[MQTT] Subscribed to: {lights_topic}")
+                print(f"[MQTT] Subscribed to: {camera_topic}")
+                print("[MQTT] Using SDK's authenticated MQTT client")
+            except Exception as e:
+                print(f"[MQTT] Subscription error: {e}")
+                import traceback
+                traceback.print_exc()
+        except Exception as e:
+            print(f"[MQTT] Failed to setup subscription: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _on_mqtt_message(self, client, userdata, msg):
+        """Process incoming MQTT status messages"""
+        try:
+            topic = msg.topic
+            payload = json.loads(msg.payload.decode())
+            
+            # Handle lights status
+            if "/lights/status" in topic:
+                if "data" in payload:
+                    data = payload["data"]
+                    self.actual_chassis_light_value = int(data.get("io4", 0))
+                    self.actual_camera_light_value = int(data.get("io5", 0))
+                    print(f"[MQTT] Lights Status: chassis={self.actual_chassis_light_value}, camera={self.actual_camera_light_value}")
+                    # Queue UI update on main thread
+                    self.after(0, self._update_hardware_status_display)
+            
+            # Handle camera servo status
+            elif "/camera_servo/status" in topic:
+                if "data" in payload:
+                    data = payload["data"]
+                    self.actual_pan_rad = float(data.get("pan", 0.0))
+                    self.actual_tilt_rad = float(data.get("tilt", 0.0))
+                    pan_deg = math.degrees(self.actual_pan_rad)
+                    tilt_deg = math.degrees(self.actual_tilt_rad)
+                    print(f"[MQTT] Camera Status: pan={pan_deg:.1f}°, tilt={tilt_deg:.1f}°")
+                    # Queue UI update on main thread - update sliders AND direction
+                    self.after(0, lambda pd=pan_deg, td=tilt_deg: self._update_camera_sliders_from_hardware(pd, td))
+        except Exception as e:
+            print(f"[MQTT] Error processing message: {e}")
+
+    def _update_camera_sliders_from_hardware(self, pan_deg, tilt_deg):
+        """Update camera sliders to match actual hardware position"""
+        try:
+            # Update slider values to show actual hardware position
+            # This will trigger callbacks, but that's OK - we're just confirming position
+            self.pan_slider.set(pan_deg)
+            self.tilt_slider.set(tilt_deg)
+            # Also update direction display
+            self.update_camera_direction()
+        except Exception as e:
+            print(f"[MQTT] Error updating camera sliders: {e}")
 
     def toggle_chassis_light(self):
         self.chassis_light_on = not self.chassis_light_on
@@ -178,7 +299,7 @@ class DisplaySystem(ctk.CTk):
             client.mqtt.connect()
             client.mqtt.publish(topic, payload)
             self.terminal.configure(state="normal")
-            self.terminal.insert("end", f"> Chassis Light {status}\n")
+            self.terminal.insert("end", f"> Command: Chassis Light {status} (awaiting hardware confirmation)\n")
             self.terminal.see("end")
             self.terminal.configure(state="disabled")
         except Exception as e:
@@ -209,7 +330,7 @@ class DisplaySystem(ctk.CTk):
             client.mqtt.connect()
             client.mqtt.publish(topic, payload)
             self.terminal.configure(state="normal")
-            self.terminal.insert("end", f"> Camera Light {status}\n")
+            self.terminal.insert("end", f"> Command: Camera Light {status} (awaiting hardware confirmation)\n")
             self.terminal.see("end")
             self.terminal.configure(state="disabled")
         except Exception as e:
@@ -229,12 +350,14 @@ class DisplaySystem(ctk.CTk):
         """Handle pan slider change"""
         pan_deg = int(float(value))
         self.pan_value_label.configure(text=f"{pan_deg}°")
+        self.update_camera_direction()
         self.send_camera_command(pan_deg, int(self.tilt_slider.get()))
 
     def on_tilt_change(self, value):
         """Handle tilt slider change"""
         tilt_deg = int(float(value))
         self.tilt_value_label.configure(text=f"{tilt_deg}°")
+        self.update_camera_direction()
         self.send_camera_command(int(self.pan_slider.get()), tilt_deg)
 
     def send_camera_command(self, pan_deg, tilt_deg):
@@ -264,8 +387,116 @@ class DisplaySystem(ctk.CTk):
         self.pan_slider.set(0)
         self.tilt_slider.set(0)
         self.send_camera_command(0, 0)
+        self.update_camera_direction()
+
+    def calculate_camera_direction(self, pan_deg, tilt_deg):
+        """
+        Calculate camera direction vector relative to robot base.
+        
+        Pan: horizontal rotation (0° = forward, 90° = left, -90° = right)
+        Tilt: vertical rotation (0° = horizontal, 90° = up, -45° = down)
+        
+        Returns: (x, y, z) unit direction vector and descriptive string
+        """
+        # Convert to radians
+        pan_rad = self.degrees_to_radians(pan_deg)
+        tilt_rad = self.degrees_to_radians(tilt_deg)
+        
+        # Start with forward direction along robot's local X-axis
+        # Apply pan rotation around Z-axis (vertical)
+        # Apply tilt rotation around Y-axis (sideways, perpendicular to forward)
+        
+        x = math.cos(tilt_rad) * math.sin(pan_rad)
+        y = math.cos(tilt_rad) * math.cos(pan_rad)  # Forward is +Y when pan=0
+        z = math.sin(tilt_rad)
+        
+        # Determine direction description
+        direction_parts = []
+        
+        # Vertical component
+        if z > 0.3:
+            direction_parts.append("Up")
+        elif z < -0.3:
+            direction_parts.append("Down")
+        
+        # Horizontal component (relative to robot forward)
+        if abs(pan_deg) < 30:
+            direction_parts.append("Forward")
+        elif pan_deg > 30:
+            direction_parts.append("Left")
+        elif pan_deg < -30:
+            direction_parts.append("Right")
+        
+        if not direction_parts:
+            direction_parts = ["Horizontal"]
+        
+        direction_str = ", ".join(direction_parts)
+        
+        return (x, y, z), direction_str
+
+    def update_camera_direction(self):
+        """Update camera direction display"""
+        try:
+            pan_deg = int(float(self.pan_slider.get()))
+            tilt_deg = int(float(self.tilt_slider.get()))
+            
+            (x, y, z), direction_str = self.calculate_camera_direction(pan_deg, tilt_deg)
+            
+            # Also show actual hardware position if different
+            actual_pan_deg = math.degrees(self.actual_pan_rad)
+            actual_tilt_deg = math.degrees(self.actual_tilt_rad)
+            
+            if abs(actual_pan_deg - pan_deg) > 2 or abs(actual_tilt_deg - tilt_deg) > 2:
+                # Significant difference - show both commanded and actual
+                actual_dir = self.calculate_camera_direction(actual_pan_deg, actual_tilt_deg)[1]
+                self.direction_label.configure(
+                    text=f"Cmd: {direction_str} | Actual: {actual_dir}",
+                    text_color="yellow"
+                )
+            else:
+                # Positions match
+                self.direction_label.configure(
+                    text=f"Direction: {direction_str}",
+                    text_color="cyan"
+                )
+        except Exception as e:
+            print(f"Error updating camera direction: {e}")
+
+    def _update_hardware_status_display(self):
+        """Update status labels to show actual hardware state"""
+        try:
+            # Update lights status
+            chassis_status = "ON" if self.actual_chassis_light_value > 0 else "OFF"
+            camera_status = "ON" if self.actual_camera_light_value > 0 else "OFF"
+            
+            self.chassis_status_label.configure(text=f"Chassis: {chassis_status}")
+            self.camera_status_label.configure(text=f"Camera: {camera_status}")
+            
+            # Update button appearance based on ACTUAL hardware state
+            chassis_color = "#22AA22" if self.actual_chassis_light_value > 0 else "gray30"
+            camera_color = "#22AA22" if self.actual_camera_light_value > 0 else "gray30"
+            chassis_label_color = "lime" if self.actual_chassis_light_value > 0 else "gray"
+            camera_label_color = "lime" if self.actual_camera_light_value > 0 else "gray"
+            
+            # Only update if there's a change to avoid flicker
+            if self.btn_chassis.cget("fg_color")[0] != chassis_color:
+                self.btn_chassis.configure(fg_color=chassis_color, text_color="white")
+            if self.chassis_status_label.cget("text_color") != chassis_label_color:
+                self.chassis_status_label.configure(text_color=chassis_label_color)
+                
+            if self.btn_camera.cget("fg_color")[0] != camera_color:
+                self.btn_camera.configure(fg_color=camera_color, text_color="white")
+            if self.camera_status_label.cget("text_color") != camera_label_color:
+                self.camera_status_label.configure(text_color=camera_label_color)
+                
+        except Exception as e:
+            print(f"Error updating hardware status display: {e}")
 
     def update_views(self):
+        """Update all display elements"""
+        # Update hardware status displays
+        self._update_hardware_status_display()
+        
         try:
             # Update ApriltagQuick view using exact drawing logic adapted
             raw_bytes = aq.latest_frame["bytes"]
@@ -277,15 +508,32 @@ class DisplaySystem(ctk.CTk):
                     display_img = img.copy()
                     if aq.cv2 is not None and getattr(aq, 'aruco_dict', None) is not None:
                         gray = cv2.cvtColor(display_img, cv2.COLOR_BGR2GRAY)
+                        
+                        # Dynamic Brightness: Fixes tags washing out when the physical LED is ON
+                        # Evaluate lighting based on the center of the image where the LED casts its beam
+                        h, w = gray.shape
+                        crop_y, crop_x = h // 4, w // 4
+                        center_roi = gray[crop_y : h - crop_y, crop_x : w - crop_x]
+                        center_brightness = cv2.mean(center_roi)[0]
+                        
+                        if center_brightness < 90:
+                            # Image is dark (LED OFF): boost overall brightness
+                            gray_adj = cv2.convertScaleAbs(gray, alpha=1.3, beta=40)
+                        elif center_brightness > 150:
+                            # Image is washed out/glare in the center: darken to recover contrast
+                            gray_adj = cv2.convertScaleAbs(gray, alpha=0.8, beta=-30)
+                        else:
+                            # Normal lighting
+                            gray_adj = gray
+                        
+                        # Apply light CLAHE for local contrast balancing
                         clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
-                        gray_boost = clahe.apply(gray)
-                        blur = cv2.GaussianBlur(gray_boost, (0, 0), 3)
-                        sharp_gray = cv2.addWeighted(gray_boost, 2.0, blur, -1.0, 0)
+                        processed_gray = clahe.apply(gray_adj)
                         
                         if getattr(aq, 'aruco_detector', None) is not None:
-                            corners, ids, rejected = aq.aruco_detector.detectMarkers(sharp_gray)
+                            corners, ids, rejected = aq.aruco_detector.detectMarkers(processed_gray)
                         else:
-                            corners, ids, rejected = cv2.aruco.detectMarkers(sharp_gray, aq.aruco_dict, parameters=aq.aruco_params)
+                            corners, ids, rejected = cv2.aruco.detectMarkers(processed_gray, aq.aruco_dict, parameters=aq.aruco_params)
                             
                         if ids is not None and len(ids) > 0:
                             cv2.aruco.drawDetectedMarkers(display_img, corners)
@@ -396,6 +644,10 @@ class DisplaySystem(ctk.CTk):
     def destroy(self):
         self.stop_event.set()
         aq.stop_event.set()
+        
+        # Note: We don't disconnect the MQTT client as it's managed by the SDK
+        # The SDK will handle cleanup
+        
         time.sleep(0.5)
         super().destroy()
 
