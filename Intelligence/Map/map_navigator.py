@@ -2,7 +2,7 @@
 """
 Map Navigator
 =============
-Displays rtabmap.png (10.25 × 12.1 m, centre = world origin) and lets you
+Displays rtabmap.png (10.25 x 12.1 m, centre = world origin) and lets you
 drive the UGV by dragging an arrow on the map:
 
   • Left-click drag  → send  goto(target_position)
@@ -63,36 +63,6 @@ else:
     print(f"Warning: could not load logo from {_LOGO_PATH}")
 _LOGO_MARGIN = 10   # pixels from edge
 
-# ── Load zone masks ───────────────────────────────────────────────────────────
-_ZONES_PATH = os.path.join(_THIS_DIR, "Zones")
-_zones: dict = {}  # {zone_id: {"name": str, "mask": np.ndarray, "mask_scaled": np.ndarray}}
-if os.path.exists(_ZONES_PATH):
-    print(f"Loading zones from: {_ZONES_PATH}")
-    for filename in sorted(os.listdir(_ZONES_PATH)):
-        if filename.endswith(".png"):
-            # Parse filename: "1_ZoneName.png" → id=1, name="ZoneName"
-            base = filename[:-4]  # remove .png
-            parts = base.split("_", 1)
-            if len(parts) == 2 and parts[0].isdigit():
-                zone_id = int(parts[0])
-                zone_name = parts[1]
-                zone_path = os.path.join(_ZONES_PATH, filename)
-                zone_img = cv2.imread(zone_path, cv2.IMREAD_UNCHANGED)
-                if zone_img is not None:
-                    # Scale to display dimensions
-                    zone_scaled = cv2.resize(zone_img, (DISP_W, DISP_H), interpolation=cv2.INTER_NEAREST)
-                    _zones[zone_id] = {"name": zone_name, "mask": zone_img, "mask_scaled": zone_scaled}
-                    print(f"  ✓ Zone {zone_id}: {zone_name} ({zone_img.shape})")
-                else:
-                    print(f"  ✗ Failed to load {filename}")
-else:
-    print(f"Note: Zones folder not found at {_ZONES_PATH}")
-
-if not _zones:
-    print("  (No zones loaded)")
-
-_current_zone: dict | None = None  # Currently active zone (if robot is in one)
-
 # ── Coordinate conversion helpers ────────────────────────────────────────────
 def world_to_px(wx: float, wy: float) -> tuple[int, int]:
     """World metres → display-image pixel (90° CW: world-y→image-x, world-x→image-y)."""
@@ -149,6 +119,110 @@ def _check_zone(rx: float, ry: float) -> dict | None:
     
     return None
 
+# ── Load zone masks ───────────────────────────────────────────────────────────
+_ZONES_PATH = os.path.join(_THIS_DIR, "Zones")
+_zones: dict = {}  # {zone_id: {"name": str, "mask": np.ndarray, "mask_scaled": np.ndarray}}
+if os.path.exists(_ZONES_PATH):
+    print(f"Loading zones from: {_ZONES_PATH}")
+    for filename in sorted(os.listdir(_ZONES_PATH)):
+        if filename.endswith(".png"):
+            # Parse filename: "1_ZoneName.png" → id=1, name="ZoneName"
+            base = filename[:-4]  # remove .png
+            parts = base.split("_", 1)
+            if len(parts) == 2 and parts[0].isdigit():
+                zone_id = int(parts[0])
+                zone_name = parts[1]
+                zone_path = os.path.join(_ZONES_PATH, filename)
+                zone_img = cv2.imread(zone_path, cv2.IMREAD_UNCHANGED)
+                if zone_img is not None:
+                    # Find centroid of colored (non-transparent) region
+                    if zone_img.shape[2] == 4:
+                        # Use alpha channel to mask non-transparent
+                        alpha = zone_img[:, :, 3]
+                        mask = alpha > 0
+                    else:
+                        # No alpha, use any non-black pixel
+                        mask = np.any(zone_img[:, :, :3] > 1, axis=2)
+
+                    coords = np.column_stack(np.where(mask))
+                    if coords.size > 0:
+                        centroid_px = coords.mean(axis=0)  # (y, x)
+                        centroid_y, centroid_x = centroid_px
+                        # Convert to world coordinates
+                        # zone_img is (H, W), so map to display and then to world
+                        disp_x = int(centroid_x * DISP_W / zone_img.shape[1])
+                        disp_y = int(centroid_y * DISP_H / zone_img.shape[0])
+                        wx, wy = px_to_world(disp_y, disp_x)
+                        # print(f"    Centroid: (display px: {disp_x:.1f}, {disp_y:.1f})  (world: {wx:.3f}, {wy:.3f})")
+                    else:
+                        print("    Centroid: (no colored region found)")
+                    # Scale to display dimensions
+                    zone_scaled = cv2.resize(zone_img, (DISP_W, DISP_H), interpolation=cv2.INTER_NEAREST)
+                    _zones[zone_id] = {"name": zone_name, "mask": zone_img, "mask_scaled": zone_scaled, "centroid_disp": (disp_x, disp_y)}
+                    print(f"  ✓ Zone {zone_id}: {zone_name} Centroid px({disp_x:.1f}, {disp_y:.1f}) Centroid world({wx:.3f}, {wy:.3f})")
+                else:
+                    print(f"  ✗ Failed to load {filename}")
+else:
+    print(f"Note: Zones folder not found at {_ZONES_PATH}")
+
+if not _zones:
+    print("  (No zones loaded)")
+
+# ── AprilTag marker definitions ─────────────────────────────────────────────
+# Each tag: id, size (m), x, y, heading_hint (dx, dy)
+APRILTAG_MARKERS = [
+    {
+        "id": 2,
+        "size_m": 0.2,  # 200mm
+        "x": 1.23,
+        "y": 0.145,
+        "heading_hint": {"dx": 60, "dy": -36},
+    },
+    {
+        "id": 1,
+        "size_m": 0.2,  # 200mm
+        "x": 4.11,
+        "y": 2.32,
+        "heading_hint": {"dx": -46, "dy": -76},
+    }
+    # Add more tags here as needed
+]
+
+# ── Drawing function for AprilTags ──────────────────────────────────────────
+def _draw_apriltags(frame: np.ndarray, tags=APRILTAG_MARKERS):
+    for tag in tags:
+        # Get display coordinates
+        px, py = world_to_px(tag["x"], tag["y"])
+        size_px = int((tag["size_m"]*2 / MAP_W_M) * DISP_W)
+        # Heading: angle from dx, dy (display frame)
+        dx, dy = tag["heading_hint"]["dx"], tag["heading_hint"]["dy"]
+        angle = math.atan2(dy, dx)  # display frame: y down, x right
+        # Rectangle corners (centered at px, py, rotated by angle)
+        w, h = max(6, int(size_px * 0.12)), size_px  # much wider: 1:8 aspect, min height 6px
+        rect = np.array([[-w//2, -h//2], [w//2, -h//2], [w//2, h//2], [-w//2, h//2]], dtype=np.float32)
+        # Rotation matrix
+        rot = np.array([
+            [math.cos(angle), -math.sin(angle)],
+            [math.sin(angle),  math.cos(angle)]
+        ])
+        rect_rot = np.dot(rect, rot.T) + np.array([px, py])
+        pts = rect_rot.astype(np.int32)
+        # Draw filled rectangle (light color)
+        cv2.fillPoly(frame, [pts], (255, 20, 147))
+        # Draw border
+        cv2.polylines(frame, [pts], isClosed=True, color=(255, 20, 147), thickness=1)
+        # Draw tag number (centered, larger, high contrast)
+        font_scale = max(0.9, h / 16.0)  # scale with height, min 0.9
+        text = str(tag["id"])
+        (tw, th), _ = cv2.getTextSize(text, _FONT, font_scale, 3)
+        text_x = int(px - tw / 2 - 40)
+        text_y = int(py + th / 2)
+        # Draw outline for contrast
+        cv2.putText(frame, text, (text_x, text_y), _FONT, font_scale, (0, 0, 0), 2, cv2.LINE_AA)
+        # Draw number (bright yellow)
+        cv2.putText(frame, text, (text_x, text_y), _FONT, font_scale, (0, 220, 255), 2, cv2.LINE_AA)
+
+_current_zone: dict | None = None  # Currently active zone (if robot is in one)
 
 # ── Robot state (updated from subscription callbacks) ────────────────────────
 _robot_lock = threading.Lock()
@@ -170,7 +244,7 @@ _battery = {"level": 0.0, "voltage": 0.0}  # Battery percentage and voltage
 
 
 def _on_battery_telemetry(data, topic=None, *args, **kwargs):
-    """Battery telemetry callback – parse sensor_msgs/BatteryState from battery/status topic."""
+    """Battery telemetry callback - parse sensor_msgs/BatteryState from battery/status topic."""
     # print(f"[DEBUG] _on_battery_telemetry called with topic={topic}, data={data}")
     # Swap if parameters are reversed
     if isinstance(data, str) and isinstance(topic, dict):
@@ -209,7 +283,7 @@ def _on_battery_telemetry(data, topic=None, *args, **kwargs):
 
 
 def _on_lidar_scan(data, topic=None, *args, **kwargs):
-    """Lidar subscription callback – parse and update scan data."""
+    """Lidar subscription callback - parse and update scan data."""
     if isinstance(data, str) and isinstance(topic, dict):
         data, topic = topic, data
     
@@ -239,7 +313,7 @@ def _quat_to_yaw(q: dict) -> float | None:
 
 
 def _on_position(data):
-    """Position subscription callback – parse and update robot x/y."""
+    """Position subscription callback - parse and update robot x/y."""
     if not isinstance(data, dict):
         return
     # Unwrap common nesting patterns
@@ -263,7 +337,7 @@ def _on_position(data):
 
 
 def _on_rotation(data):
-    """Rotation subscription callback – parse and update robot yaw."""
+    """Rotation subscription callback - parse and update robot yaw."""
     if not isinstance(data, dict):
         return
     if "message" in data and isinstance(data["message"], dict):
@@ -290,7 +364,7 @@ def _on_rotation(data):
 
 # ── Cyberwave connection ─────────────────────────────────────────────────────
 cw = Cyberwave()
-cw.affect("live")
+cw.affect("simulation")
 ugv = cw.twin(
     "waveshare/ugv-beast",
     twin_id=TWIN_UUID,
@@ -368,18 +442,21 @@ def _on_mouse(event, x, y, flags, param):
             # CTRL+Click: Set initial pose via MQTT
             # Reverse the calibration transform: translate then rotate by -π/2
             # First apply inverse translation
-            x_trans = tx + 2.6
-            y_trans = ty + 3.3
-            # Then apply inverse rotation (-π/2 around Z)
-            api_x = y_trans
-            api_y = -x_trans
+            print(tx)
+            print(ty)
+            # Also print heading
+            print(f"Heading hint: dx={ex-sx}, dy={ey-sy}")
+            
+            api_x = ty + 3.3
+            api_y = -tx - 2.6
             
             # Build quaternion from heading
             dx, dy = ex - sx, ey - sy
             heading_yaw = math.atan2(dx, dy)
             # Reverse the calibration rotation by subtracting π/2 (inverse of the forward +π/2)
-            heading_yaw = heading_yaw - math.pi / 2
-            half_yaw = heading_yaw / 2.0
+            api_yaw = heading_yaw - math.pi / 2
+            
+            half_yaw = api_yaw / 2.0
             qx, qy, qz = 0.0, 0.0, math.sin(half_yaw)
             qw = math.cos(half_yaw)
             
@@ -407,31 +484,29 @@ def _on_mouse(event, x, y, flags, param):
                     raise AttributeError("No MQTT publish method available")
                 print(
                     f"→ setInitialPose ({api_x:+.3f}, {api_y:+.3f}) "
-                    f"heading={math.degrees(heading_yaw):+.1f}°"
+                    f"heading={math.degrees(api_yaw):+.1f}°"
                 )
             except Exception as e:
                 print(f"Error publishing initialpose: {e}")
         elif is_shift_down:
             # Shift+Click: Set goal pose via goto
-            # Reverse the calibration transform: translate then rotate by -π/2
-            # First apply inverse translation
-            x_trans = tx + 2.6
-            y_trans = ty + 3.3
-            # Then apply inverse rotation (-π/2 around Z)
-            api_x = y_trans
-            api_y = -x_trans
+            # Reverse the calibration transform
+            api_x = ty + 3.3
+            api_y = -tx - 2.6
             
             # Build quaternion from heading
             dx, dy = ex - sx, ey - sy
-            goal_yaw = math.atan2(dx, dy)
-            # Reverse the calibration rotation by subtracting π/2 (inverse of the forward +π/2)
-            goal_yaw = goal_yaw - math.pi / 2
-            _last_goal = {"x": tx, "y": ty, "yaw": goal_yaw}
+            ui_yaw = math.atan2(dx, dy)
+            # Retain purely UI-based unrotated angle for the rendering
+            _last_goal = {"x": tx, "y": ty, "yaw": ui_yaw}
             
-            resp = ugv.navigation.goto([api_x, api_y, 0.0], source_type="tele")
+            # Apply the -pi/2 offset to map rotation
+            api_yaw = ui_yaw - math.pi / 2
+            
+            resp = ugv.navigation.goto([api_x, api_y, api_yaw], source_type="tele")
             print(
                 f"→ goto ({api_x:+.3f}, {api_y:+.3f}) "
-                f"heading={math.degrees(goal_yaw):+.1f}°  |  resp: {resp}"
+                f"heading={math.degrees(api_yaw):+.1f}°  |  resp: {resp}"
             )
         _drag["start"] = _drag["end"] = None
 
@@ -440,7 +515,7 @@ def _on_mouse(event, x, y, flags, param):
 _FONT      = cv2.FONT_HERSHEY_SIMPLEX
 _COL_ROBOT = (0, 0, 0)        # black
 _COL_GOAL  = (0, 140, 255)      # orange
-_COL_GRID  = (180, 60, 60)      # slate-blue  – visible on both white & black map
+_COL_GRID  = (180, 60, 60)      # slate-blue - visible on both white & black map
 _COL_AXIS  = (220, 100, 100)    # brighter blue for the zero axes
 _COL_HUD   = (200, 200, 200)    # light grey
 
@@ -455,20 +530,20 @@ def _draw_grid(frame: np.ndarray, step_m: float = 1.0):
     for i in range(-wy_range, wy_range + 1):
         px, _ = world_to_px(0, i * step_m)   # world-y in 2nd arg
         colour = _COL_AXIS if i == 0 else _COL_GRID
-        cv2.line(frame, (px, 0), (px, DISP_H - 1), colour, 1)
+        cv2.line(frame, (px, 0), (px, DISP_H - 1), colour, 2)
         if i != 0:
             cv2.putText(frame, f"y={i*step_m:g}", (px + 2, 12),
-                        _FONT, 0.32, _COL_GRID, 1, cv2.LINE_AA)
+                        _FONT, 0.6, _COL_GRID, 1, cv2.LINE_AA)
 
     # Horizontal lines: constant world-x → constant image-y
     wx_range = math.ceil(MAP_H_M / 2 / step_m)
     for i in range(-wx_range, wx_range + 1):
         _, py = world_to_px(i * step_m, 0)   # world-x in 1st arg
         colour = _COL_AXIS if i == 0 else _COL_GRID
-        cv2.line(frame, (0, py), (DISP_W - 1, py), colour, 1)
+        cv2.line(frame, (0, py), (DISP_W - 1, py), colour, 2)
         if i != 0:
             cv2.putText(frame, f"x={i*step_m:g}", (2, py - 2),
-                        _FONT, 0.32, _COL_GRID, 1, cv2.LINE_AA)
+                        _FONT, 0.6, _COL_GRID, 1, cv2.LINE_AA)
 
     # Origin cross-hair
     ox, oy = world_to_px(0, 0)
@@ -478,7 +553,7 @@ def _draw_grid(frame: np.ndarray, step_m: float = 1.0):
 
 def _draw_robot(frame: np.ndarray):
     with _robot_lock:
-        rx, ry, ryaw = _robot["x"], _robot["y"], _robot["yaw"]
+        rx, ry, ryaw = _robot.get("x", 0.0), _robot.get("y", 0.0), _robot.get("yaw", 0.0)
     px, py = world_to_px(rx, ry)
     r = 10
     cv2.circle(frame, (px, py), r, _COL_ROBOT, 2)
@@ -502,7 +577,7 @@ def _draw_lidar_scan(frame: np.ndarray):
         return
     
     with _robot_lock:
-        rx, ry, ryaw = _robot["x"], _robot["y"], _robot["yaw"]
+        rx, ry, ryaw = _robot.get("x", 0.0), _robot.get("y", 0.0), _robot.get("yaw", 0.0)
     
     for i, (angle, distance) in enumerate(zip(angles, ranges)):
         if distance <= 0.01 or distance > 12.0:  # Skip invalid or too-far points
@@ -590,9 +665,6 @@ def _draw_logo(frame: np.ndarray):
 
 
 
-
-
-
 def _draw_zone_mask(frame: np.ndarray, zone_data: dict):
     """Composite zone mask with 40% opacity underneath the robot marker."""
     mask_scaled = zone_data["mask_scaled"]
@@ -630,8 +702,8 @@ def _draw_hud(frame: np.ndarray):
         "S = stop robot   Q / Esc = quit",
     ]
     for i, txt in enumerate(reversed(lines)):
-        cv2.putText(frame, txt, (6, h - 8 - 16 * i),
-                    _FONT, 0.38, _COL_HUD, 1, cv2.LINE_AA)
+        cv2.putText(frame, txt, (6, h - 12 - 22 * i),
+                    _FONT, 0.7, _COL_HUD, 2, cv2.LINE_AA)
     
 
     # Display zone name if robot is in a zone
@@ -639,7 +711,7 @@ def _draw_hud(frame: np.ndarray):
     if _current_zone is not None:
         zone_name = _current_zone.get("name", "Unknown")
         cv2.putText(frame, f"Zone: {zone_name}", (6, y_pos),
-                    _FONT, 1.0, (50, 200, 100), 1, cv2.LINE_AA)
+                    _FONT, 1.0, (50, 200, 100), 2, cv2.LINE_AA)
         y_pos += 20
 
     # Draw large battery bar under the zone label
@@ -667,41 +739,65 @@ def _draw_hud(frame: np.ndarray):
 
 
 # ── Main loop ────────────────────────────────────────────────────────────────
-WIN = "Map Navigator"
-cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
-cv2.resizeWindow(WIN, DISP_W, DISP_H)
-cv2.setMouseCallback(WIN, _on_mouse)
+def main():
+    WIN = "Map Navigator"
 
-print(f"Map: {_SRC_W}×{_SRC_H} px → {DISP_W}×{DISP_H} px  "
-      f"({MAP_W_M} × {MAP_H_M} m).  Drag on window to navigate. Press Q to quit.")
+    # Get screen dimensions and ensure window fits (leaving room for taskbar)
+    try:
+        import ctypes
+        screen_width = ctypes.windll.user32.GetSystemMetrics(0)
+        screen_height = ctypes.windll.user32.GetSystemMetrics(1)
+        # Leave margin for taskbar (~60px) and window decorations (~40px)
+        max_window_height = screen_height - 100
+        if DISP_H > max_window_height:
+            scale = max_window_height / DISP_H
+            window_w = int(DISP_W * scale)
+            window_h = int(DISP_H * scale)
+        else:
+            window_w, window_h = DISP_W, DISP_H
+    except Exception:
+        # Fallback if screen detection fails
+        window_w, window_h = DISP_W, DISP_H
 
-try:
-    while True:
-        frame = cv2.resize(_BASE_IMG, (DISP_W, DISP_H), interpolation=cv2.INTER_NEAREST)
-        _draw_grid(frame)
-        
-        # Check and draw zone
-        with _robot_lock:
-            rx, ry = _robot["x"], _robot["y"]
-        _current_zone = _check_zone(rx, ry)
-        if _current_zone is not None:
-            _draw_zone_mask(frame, _current_zone)
-        
-        _draw_last_goal(frame)
-        _draw_drag_arrow(frame)
-        _draw_lidar_scan(frame)
-        _draw_robot(frame)
-        _draw_logo(frame)
-        _draw_hud(frame)
-        cv2.imshow(WIN, frame)
+    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WIN, window_w, window_h)
+    cv2.setMouseCallback(WIN, _on_mouse)
 
-        key = cv2.waitKey(33) & 0xFF
-        if key in (ord('q'), 27):   # Q or Esc
-            break
-        elif key == ord('s'):
-            resp = ugv.navigation.stop(source_type="tele")
-            print(f"→ stop  |  resp: {resp}")
-finally:
-    cv2.destroyAllWindows()
-    cw.disconnect()
-    print("Disconnected.")
+    print(f"Map: {_SRC_W}x{_SRC_H} px → {DISP_W}x{DISP_H} px  "
+          f"({MAP_W_M} x {MAP_H_M} m).  Drag on window to navigate. Press Q to quit.")
+
+    try:
+        while True:
+            frame = cv2.resize(_BASE_IMG, (DISP_W, DISP_H), interpolation=cv2.INTER_NEAREST)
+            _draw_grid(frame)
+            
+            # Check and draw zone
+            with _robot_lock:
+                rx, ry = _robot["x"], _robot["y"]
+            global _current_zone
+            _current_zone = _check_zone(rx, ry)
+            if _current_zone is not None:
+                _draw_zone_mask(frame, _current_zone)
+            
+            _draw_last_goal(frame)
+            _draw_drag_arrow(frame)
+            _draw_lidar_scan(frame)
+            _draw_apriltags(frame)  # Draw AprilTags
+            _draw_robot(frame)
+            _draw_logo(frame)
+            _draw_hud(frame)
+            cv2.imshow(WIN, frame)
+
+            key = cv2.waitKey(33) & 0xFF
+            if key in (ord('q'), 27):   # Q or Esc
+                break
+            elif key == ord('s'):
+                resp = ugv.navigation.stop(source_type="tele")
+                print(f"→ stop  |  resp: {resp}")
+    finally:
+        cv2.destroyAllWindows()
+        cw.disconnect()
+        print("Disconnected.")
+
+if __name__ == "__main__":
+    main()
