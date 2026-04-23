@@ -242,11 +242,13 @@ def main():
                             center_brightness = cv2.mean(center_roi)[0]
                             
                             if center_brightness < 90:
-                                # Image is dark (LED OFF): boost overall brightness
-                                gray_adj = cv2.convertScaleAbs(gray, alpha=1.3, beta=40)
+                                # Dark (LED OFF): brighten midtones using Gamma Correction (gamma = 1.5)
+                                table = np.array([((i / 255.0) ** (1.0 / 1.5)) * 255 for i in np.arange(0, 256)]).astype("uint8")
+                                gray_adj = cv2.LUT(gray, table)
                             elif center_brightness > 150:
-                                # Image is washed out/glare in the center: darken to recover contrast
-                                gray_adj = cv2.convertScaleAbs(gray, alpha=0.8, beta=-30)
+                                # Washed out (LED ON): heavily darken midtones to pull detail out of the glare (gamma = 0.4)
+                                table = np.array([((i / 255.0) ** (1.0 / 0.3)) * 255 for i in np.arange(0, 256)]).astype("uint8")
+                                gray_adj = cv2.LUT(gray, table)
                             else:
                                 # Normal lighting
                                 gray_adj = gray
