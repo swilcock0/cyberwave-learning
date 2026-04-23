@@ -13,6 +13,7 @@ import cv2
 import threading
 import numpy as np
 import time
+import math
 
 # Import shared state/drawing functions from map_navigator
 from Intelligence.Map import map_navigator as mn
@@ -52,14 +53,82 @@ class DisplaySystem(ctk.CTk):
 
         self.controls_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
         self.controls_frame.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+        self.controls_frame.grid_columnconfigure(0, weight=1)  # Left: sliders
+        self.controls_frame.grid_columnconfigure(1, weight=0)  # Right: button
+        self.controls_frame.grid_rowconfigure(0, weight=0)
+        self.controls_frame.grid_rowconfigure(1, weight=0)
+        self.controls_frame.grid_rowconfigure(2, weight=0)
+
+        # Light toggle buttons
+        lights_frame = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
+        lights_frame.grid(row=0, column=0, sticky="ew")
 
         self.chassis_light_on = False
-        self.btn_chassis = ctk.CTkButton(self.controls_frame, text="Toggle Chassis Light", command=self.toggle_chassis_light)
-        self.btn_chassis.pack(side="left", padx=5, expand=True)
+        self.btn_chassis = ctk.CTkButton(lights_frame, text="Toggle Chassis Light", command=self.toggle_chassis_light)
+        self.btn_chassis.pack(side="left", padx=5, expand=True, fill="x")
 
         self.camera_light_on = False
-        self.btn_camera = ctk.CTkButton(self.controls_frame, text="Toggle Camera Light", command=self.toggle_camera_light)
-        self.btn_camera.pack(side="right", padx=5, expand=True)
+        self.btn_camera = ctk.CTkButton(lights_frame, text="Toggle Camera Light", command=self.toggle_camera_light)
+        self.btn_camera.pack(side="right", padx=5, expand=True, fill="x")
+
+        # Camera pan control
+        pan_frame = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
+        pan_frame.grid(row=1, column=0, sticky="ew", pady=3)
+        pan_frame.grid_columnconfigure(1, weight=1)
+
+        pan_label = ctk.CTkLabel(pan_frame, text="Pan", font=("Arial", 9), width=40)
+        pan_label.grid(row=0, column=0, padx=5)
+
+        self.pan_slider = ctk.CTkSlider(
+            pan_frame,
+            from_=-180,
+            to=180,
+            number_of_steps=360,
+            command=self.on_pan_change,
+            orientation="horizontal",
+            height=20
+        )
+        self.pan_slider.set(0)
+        self.pan_slider.grid(row=0, column=1, sticky="ew", padx=5)
+
+        self.pan_value_label = ctk.CTkLabel(pan_frame, text="0°", font=("Arial", 9), width=40)
+        self.pan_value_label.grid(row=0, column=2, padx=5)
+
+        # Camera tilt control
+        tilt_frame = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
+        tilt_frame.grid(row=2, column=0, sticky="ew", pady=3)
+        tilt_frame.grid_columnconfigure(1, weight=1)
+
+        tilt_label = ctk.CTkLabel(tilt_frame, text="Tilt", font=("Arial", 9), width=40)
+        tilt_label.grid(row=0, column=0, padx=5)
+
+        self.tilt_slider = ctk.CTkSlider(
+            tilt_frame,
+            from_=-45,
+            to=90,
+            number_of_steps=135,
+            command=self.on_tilt_change,
+            orientation="horizontal",
+            height=20
+        )
+        self.tilt_slider.set(0)
+        self.tilt_slider.grid(row=0, column=1, sticky="ew", padx=5)
+
+        self.tilt_value_label = ctk.CTkLabel(tilt_frame, text="0°", font=("Arial", 9), width=40)
+        self.tilt_value_label.grid(row=0, column=2, padx=5)
+
+        # Reset to center button (right side, spanning pan & tilt rows)
+        reset_button_frame = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
+        reset_button_frame.grid(row=1, column=1, rowspan=2, sticky="ns", padx=5)
+
+        reset_button = ctk.CTkButton(
+            reset_button_frame,
+            text="Reset to\nCenter",
+            command=self.reset_camera_position,
+            height=50,
+            width=80
+        )
+        reset_button.pack(fill="both", expand=True)
 
         self.terminal = ctk.CTkTextbox(self.left_frame, fg_color="black", text_color="green", font=("Consolas", 14))
         self.terminal.grid(row=2, column=0, padx=10, pady=10, sticky="nsew")
@@ -151,6 +220,50 @@ class DisplaySystem(ctk.CTk):
             print(f"Error in toggle_camera_light: {e}")
             import traceback
             traceback.print_exc()
+
+    def degrees_to_radians(self, degrees):
+        """Convert degrees to radians"""
+        return degrees * math.pi / 180.0
+
+    def on_pan_change(self, value):
+        """Handle pan slider change"""
+        pan_deg = int(float(value))
+        self.pan_value_label.configure(text=f"{pan_deg}°")
+        self.send_camera_command(pan_deg, int(self.tilt_slider.get()))
+
+    def on_tilt_change(self, value):
+        """Handle tilt slider change"""
+        tilt_deg = int(float(value))
+        self.tilt_value_label.configure(text=f"{tilt_deg}°")
+        self.send_camera_command(int(self.pan_slider.get()), tilt_deg)
+
+    def send_camera_command(self, pan_deg, tilt_deg):
+        """Send camera servo command via MQTT"""
+        try:
+            pan_rad = self.degrees_to_radians(pan_deg)
+            tilt_rad = self.degrees_to_radians(tilt_deg)
+            
+            topic = f"cyberwave/twin/{mn.ugv.uuid}/command"
+            payload = {
+                "command": "camera_servo",
+                "data": {"pan": pan_rad, "tilt": tilt_rad},
+                "source_type": "tele"
+            }
+            
+            client = mn.ugv.client
+            if not client or not hasattr(client, 'mqtt'):
+                return
+            
+            client.mqtt.connect()
+            client.mqtt.publish(topic, payload)
+        except Exception as e:
+            print(f"Error sending camera command: {e}")
+
+    def reset_camera_position(self):
+        """Reset camera to center position (pan 0°, tilt 0°)"""
+        self.pan_slider.set(0)
+        self.tilt_slider.set(0)
+        self.send_camera_command(0, 0)
 
     def update_views(self):
         try:
