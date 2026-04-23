@@ -27,9 +27,15 @@ class DisplaySystem(ctk.CTk):
         self.geometry("1400x900")
         self.after(0, lambda: self.state('zoomed')) # Fullscreen/zoomed on startup
         
+        # Calculate ideal map width based on screen height to keep aspect ratio
+        # so the right panel perfectly fits the map, giving the rest to the left panel
+        screen_h = self.winfo_screenheight() - 100
+        map_aspect = mn.DISP_W / mn.DISP_H
+        ideal_map_w = int(screen_h * map_aspect)
+
         # Configure grid for main layout (1 row, 2 columns)
-        self.grid_columnconfigure(0, weight=1) # Left side
-        self.grid_columnconfigure(1, weight=2) # Right side (Map)
+        self.grid_columnconfigure(0, weight=1) # Left side takes remaining space
+        self.grid_columnconfigure(1, weight=0) # Right side fixed to map width
         self.grid_rowconfigure(0, weight=1)
 
         # ---- LEFT PANEL (Video + Terminal) ----
@@ -37,19 +43,31 @@ class DisplaySystem(ctk.CTk):
         self.left_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
         self.left_frame.grid_propagate(False) # Stop content from stretching the frame further!
         self.left_frame.grid_columnconfigure(0, weight=1)
-        self.left_frame.grid_rowconfigure(0, weight=1) # Camera top
-        self.left_frame.grid_rowconfigure(1, weight=1) # Terminal bottom
+        self.left_frame.grid_rowconfigure(0, weight=0) # Camera top (fits to content)
+        self.left_frame.grid_rowconfigure(1, weight=0) # Buttons frame
+        self.left_frame.grid_rowconfigure(2, weight=1) # Terminal bottom (takes remaining)
 
         self.apriltag_label = ctk.CTkLabel(self.left_frame, text="Loading Camera...")
         self.apriltag_label.grid(row=0, column=0, padx=10, pady=10) # Removed sticky="nsew" so it wraps image tightly
 
+        self.controls_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
+        self.controls_frame.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+
+        self.chassis_light_on = False
+        self.btn_chassis = ctk.CTkButton(self.controls_frame, text="Toggle Chassis Light", command=self.toggle_chassis_light)
+        self.btn_chassis.pack(side="left", padx=5, expand=True)
+
+        self.camera_light_on = False
+        self.btn_camera = ctk.CTkButton(self.controls_frame, text="Toggle Camera Light", command=self.toggle_camera_light)
+        self.btn_camera.pack(side="right", padx=5, expand=True)
+
         self.terminal = ctk.CTkTextbox(self.left_frame, fg_color="black", text_color="green", font=("Consolas", 14))
-        self.terminal.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        self.terminal.grid(row=2, column=0, padx=10, pady=10, sticky="nsew")
         self.terminal.insert("0.0", "System Initialized. Connected to UGV.\n")
         self.terminal.configure(state="disabled")
 
         # ---- RIGHT PANEL (Map Navigator) ----
-        self.right_frame = ctk.CTkFrame(self)
+        self.right_frame = ctk.CTkFrame(self, width=ideal_map_w)
         self.right_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
         self.right_frame.grid_propagate(False) # Stop content from stretching the frame further!
         self.right_frame.grid_columnconfigure(0, weight=1)
@@ -66,8 +84,73 @@ class DisplaySystem(ctk.CTk):
         # Background thread control
         self.stop_event = threading.Event()
 
+        # Key bindings
+        self.bind("<Key>", self.on_keypress)
+
         # We rely on their background threads doing the updates, we just loop for UI drawing
         self.update_views()
+
+    def toggle_chassis_light(self):
+        self.chassis_light_on = not self.chassis_light_on
+        val = 255 if self.chassis_light_on else 0
+        status = "ON" if self.chassis_light_on else "OFF"
+        
+        try:
+            topic = f"cyberwave/twin/{mn.ugv.uuid}/command"
+            payload = {"command": "lights", "data": {"chassis_light": val}, "source_type": "tele"}
+            
+            # Get the Cyberwave client
+            client = mn.ugv.client
+            if not client:
+                raise RuntimeError("mn.ugv.client is None")
+            if not hasattr(client, 'mqtt'):
+                raise RuntimeError("client doesn't have mqtt attribute")
+            
+            client.mqtt.connect()
+            client.mqtt.publish(topic, payload)
+            self.terminal.configure(state="normal")
+            self.terminal.insert("end", f"> Chassis Light {status}\n")
+            self.terminal.see("end")
+            self.terminal.configure(state="disabled")
+        except Exception as e:
+            self.terminal.configure(state="normal")
+            self.terminal.insert("end", f"ERROR: Chassis Light toggle failed: {str(e)}\n")
+            self.terminal.see("end")
+            self.terminal.configure(state="disabled")
+            print(f"Error in toggle_chassis_light: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def toggle_camera_light(self):
+        self.camera_light_on = not self.camera_light_on
+        val = 255 if self.camera_light_on else 0
+        status = "ON" if self.camera_light_on else "OFF"
+        
+        try:
+            topic = f"cyberwave/twin/{mn.ugv.uuid}/command"
+            payload = {"command": "lights", "data": {"camera_light": val}, "source_type": "tele"}
+            
+            # Get the Cyberwave client
+            client = mn.ugv.client
+            if not client:
+                raise RuntimeError("mn.ugv.client is None")
+            if not hasattr(client, 'mqtt'):
+                raise RuntimeError("client doesn't have mqtt attribute")
+            
+            client.mqtt.connect()
+            client.mqtt.publish(topic, payload)
+            self.terminal.configure(state="normal")
+            self.terminal.insert("end", f"> Camera Light {status}\n")
+            self.terminal.see("end")
+            self.terminal.configure(state="disabled")
+        except Exception as e:
+            self.terminal.configure(state="normal")
+            self.terminal.insert("end", f"ERROR: Camera Light toggle failed: {str(e)}\n")
+            self.terminal.see("end")
+            self.terminal.configure(state="disabled")
+            print(f"Error in toggle_camera_light: {e}")
+            import traceback
+            traceback.print_exc()
 
     def update_views(self):
         try:
@@ -100,13 +183,13 @@ class DisplaySystem(ctk.CTk):
                     
                     # Available space is defined by the left frame itself now, not the label
                     lbl_w = self.left_frame.winfo_width() - 20
-                    lbl_h = self.left_frame.winfo_height() // 2 - 20
-                    if lbl_w < 10 or lbl_h < 10:
-                        lbl_w, lbl_h = 400, 300
+                    max_h = self.left_frame.winfo_height() * 0.65 - 20 # Allow camera up to 65% of height
+                    if lbl_w < 10 or max_h < 10:
+                        lbl_w, max_h = 400, 300
                     
                     # maintain aspect ratio for camera
                     cam_h, cam_w = img.shape[:2]
-                    cam_scale = min(lbl_w / cam_w, lbl_h / cam_h)
+                    cam_scale = min(lbl_w / cam_w, max_h / cam_h)
                     cam_new_w, cam_new_h = int(cam_w * cam_scale), int(cam_h * cam_scale)
                     
                     ctk_img = ctk.CTkImage(light_image=img_pil, dark_image=img_pil, size=(max(1, cam_new_w), max(1, cam_new_h)))
@@ -167,11 +250,22 @@ class DisplaySystem(ctk.CTk):
     def _get_cv2_flags(self, event):
         flags = 0
         if hasattr(event, 'state') and event.state:
-            if event.state & 0x0001: # Shift
+            if event.state & 0x0001:  # Shift
                 flags |= cv2.EVENT_FLAG_SHIFTKEY
-            if event.state & 0x0004: # Control
+            if event.state & 0x0004:  # Control
                 flags |= cv2.EVENT_FLAG_CTRLKEY
+            if event.state & 0x20000 or event.state & 0x0008:  # Alt (Windows is 0x20000, others 0x0008)
+                flags |= cv2.EVENT_FLAG_ALTKEY
         return flags
+
+    def on_keypress(self, event):
+        char = getattr(event, 'char', '').lower()
+        keysym = getattr(event, 'keysym', '')
+        if char == 'q' or keysym == 'Escape':
+            self.destroy()
+        elif char == 's':
+            resp = mn.ugv.navigation.stop(source_type="tele")
+            print(f"→ stop  |  resp: {resp}")
 
     def on_map_press(self, event):
         mx, my = self._get_map_coords(event.x, event.y)
