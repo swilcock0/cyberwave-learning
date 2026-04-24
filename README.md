@@ -44,6 +44,7 @@ The repository is organized into several modules, each targeting a specific aspe
   - Dockerized environment for EKF.
   - Calibration scripts for IMU and Magnetometer.
   - Demonstration of MQTT sidecar bridges for forwarding new topics (not necessarily following the original design pattern/schema/intent - this was an early experiment! See [Driver Creation](./Drivers/DriverCreation/) for an example that actually uses the Cybewave SDK for that).
+- **[Hardware Deployments](./ROS2AndRobotics/ROSPackages/)**: Collection of containerized ROS 2 packages used on the robot, including Nav2, RTAB-Map, and EKF configurations. NOTE if you switch to the [swilcock0/ugv-driver:dev](https://hub.docker.com/r/swilcock0/ugv-driver/tags) UGV driver, you will NOT need to run an EKF since I fixed the orientation issues.
 <!-- - **[dev_sam](./dev_sam/)**: Development workspace containing experimental Docker setups for:
   - `dros2`: Base ROS 2 environments.
   - `ekf`: Experimental EKF configurations.
@@ -64,9 +65,6 @@ The repository is organized into several modules, each targeting a specific aspe
 
 ### 🎮 Tutorials
 - **[CameraStream](./Tutorials/CameraStream/)**: A Python tutorial demonstrating how to stream live camera feeds from a UGV digital twin using the Cyberwave API and OpenCV.
-
-### 📦 ROS Packages
-- **[Hardware Deployments](./ROSPackages/)**: Collection of containerized ROS 2 packages used on the robot, including Nav2, RTAB-Map, and EKF configurations.
 
 ## 🚀 Getting Started
 
