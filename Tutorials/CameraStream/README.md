@@ -2,25 +2,44 @@
 
 This tutorial demonstrates how to stream the live camera feed from the UGV Beast digital twin using the Cyberwave API and OpenCV.
 
+It now includes two demos:
+
+1. `CameraStream.py`: live stream + undistortion using camera calibration.
+2. `ApriltagQuick.py`: live stream + AprilTag detection + distance/axes overlay.
+
 ## Prerequisites
 
 1.  Make sure you have cyberwave properly configured in your python environment.
 2.  Install the required dependencies:
     ```bash
-    pip install opencv-python numpy
+    pip install opencv-python opencv-contrib-python numpy
     ```
+
+    Notes:
+    - `opencv-contrib-python` is required for `cv2.aruco` AprilTag detection.
+    - You can keep `opencv-python` if already installed, but `contrib` must be available.
 
 ## Usage
 
-Run the [CameraStream.py](./CameraStream.py) script:
+Run the stream demo:
 
 ```bash
 python Tutorials/CameraStream/CameraStream.py
 ```
 
+Run the AprilTag demo:
+
+```bash
+python Tutorials/CameraStream/ApriltagQuick.py
+```
+
+Press `q` to quit either window.
+
 ### Explanation
 We use `twin.camera.edge_photo(format="bytes", timeout=3.0)` to bypass the cloud WebRTC/REST cache.
 When invoked over MQTT, this command directly asks the edge device for the latest raw JPEG bytes. In the background thread, OpenCV dynamically decodes those bytes and uses the loaded calibration map parameters (`cv2.remap()`) to undistort the extreme fisheye curvature of the raw frame before displaying it on screen.
+
+Both scripts subscribe to MQTT video and also run a background `edge_photo` fetch loop, so they keep working even if one source is delayed.
 
 
 ### Camera Calibration
@@ -52,3 +71,21 @@ When processing the **undistorted** image for pose estimation (like calculating 
 If you are running 3D projection mathematical algorithms on the **undistorted** image, you must:
 1. Apply the dynamically calculated **New Camera Matrix** (which the Python script prints to the terminal interface at startup).
 2. Set your distortion coefficients array directly to **Zero** (e.g., `np.zeros((4, 1), dtype=np.float32)`). Since the physical lens distortion has already been computationally removed, applying the old distortion correction factors again would ruin the 3D calculation.
+
+## AprilTag Demo (ApriltagQuick.py)
+
+`ApriltagQuick.py` is a fast visual debugging demo for tags in live camera frames.
+
+What it does:
+
+- Uses `cv2.aruco` with `DICT_APRILTAG_36h11`.
+- Applies dynamic gamma adjustment based on center brightness.
+- Applies CLAHE contrast enhancement before detection.
+- Draws detected tag outlines and IDs.
+- Estimates per-tag pose with `cv2.solvePnP` using a default FOV-derived camera model.
+- Draws X and Y axes on each tag and prints distance in meters.
+
+Important:
+
+- `ApriltagQuick.py` does not currently apply the calibration undistortion pipeline from `CameraStream.py`.
+- Pose output is intended as a quick demo/diagnostic. For precise metric localization, prefer calibrated intrinsics and the undistorted workflow.

@@ -1,0 +1,72 @@
+rtabmap:
+  ros__parameters:
+    frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    map_frame_id: "map"
+    publish_tf: true   # RTAB-Map publishes map→odom TF (ICP-based localization)
+    subscribe_rgb: false
+    subscribe_depth: false
+    subscribe_scan: true
+    scan_topic: "/scan"
+    approx_sync: true
+    use_action_for_goal: true
+    database_path: "/root/.ros/rtabmap.db"
+
+    # Set this to false to prevent automatic "Island" creation
+    Rtabmap/StartNewMapOnLoopClosure: "false"
+    RGBD/ProximityMaxGraphDepth: "0" # Don't limit loop closure search to recent nodes, since we have no camera and rely on LiDAR for localization
+
+    # QoS: most sensors publish with SensorDataQoS (best effort). If RTAB-Map
+    # subscribes with reliable QoS, it may never receive messages.
+    qos_scan: 2
+    qos_image: 2
+    qos_camera_info: 2
+
+    # SLAM Mode / rtabmap params
+    # IMPORTANT: These MUST be strings or ROS2 throws TypeException
+    Mem/IncrementalMemory: "false" # Set to "false" to switch from mapping to pure localization
+    RGBD/OptimizeMaxError: "0"   # Don't reject LiDAR matches just because wheel odometry drifted
+    
+    # Disable visual loop closure entirely since we rely on LiDAR
+    Kp/MaxFeatures: "-1"
+    Vis/EstimationType: "0"    # 0=3D->3D registration path disabled (no visual pipeline)
+    Mem/BinDataKept: "true"     # Keep raw scan data available for ICP transform estimation
+    Reg/Strategy: "1"            # 0=Visual, 1=ICP (Lidar), 2=Both
+    RGBD/MaxOdomCacheSize: "0"   # Don't wait for consecutive successful localizations before publishing TF
+
+    Reg/Force3DoF: "true"        # Ground robot
+    Optimizer/Slam2D: "true"             # Add this line to force the map into 2D space.
+    RGBD/NeighborLinkRefining: "true" # Refine local scan links to improve wall alignment quality
+    RGBD/ProximityBySpace: "true" # Re-enable local spatial proximity matches for better map wall registration
+    RGBD/ProximityByTime: "false" # Disable global time-based proximity search to reduce false matches in changed scenes
+    RGBD/ProximityAngle: "90"     # Limit proximity associations to more plausible relative headings
+    RGBD/ProximityPathFilteringRadius: "1.2" # Keep proximity local so walls match nearby map structure
+    RGBD/ProximityPathMaxNeighbors: "5" # Fewer proximity candidates reduces ambiguous matches
+    RGBD/LinearUpdate: "0.03"     # Update more often so wall constraints are integrated sooner
+    RGBD/AngularUpdate: "0.03"    # Keep frequent heading corrections for corridor/wall alignment
+
+    # ICP specific parameters for LiDAR loop closures
+    Icp/VoxelSize: "0.05"
+    Icp/PointToPlane: "true"      # Re-enable point-to-plane for stronger planar wall alignment
+    Icp/PointToPlaneRadius: "0.25" # Slightly larger normal neighborhood for cleaner wall normals
+    Icp/Iterations: "100"
+    Icp/MaxTranslation: "1.0"     # Bound correction jumps while keeping normal motion capture
+    Icp/MaxRotation: "0.6"        # Wider yaw gate improves lock in turns while still bounded
+    Icp/MaxCorrespondenceDistance: "0.8" # 3.7 was too permissive; tighten to wall-scale correspondences
+    Icp/CorrespondenceRatio: "0.12" # Lower minimum overlap so partial wall views still register
+    Icp/OutlierRatio: "0.85"      # Keep more correspondences so long walls remain usable
+    Icp/Epsilon: "0.001"                 # Higher precision for convergence.
+    Mem/LaserScanNormalK: "20"    # Pre-compute normals on stored scans so PointToPlane ICP has good surface data to work with
+    Grid/FromDepth: "false"      # Use LiDAR instead of depth camera for occupancy grid
+    Grid/Sensor: "0"             # 0=laser scan, 1=depth camera, 2=point cloud
+
+    # Synchronization
+    queue_size: 20
+    approx_sync_max_interval: 0.05
+
+
+    # Restrict Lidar clearing range to force physical exploration
+    Grid/RangeMax: "8.0"
+    Grid/RangeMin: "0.1"
+    GridGlobal/ProbMiss: "0.48"  # Higher value (default 0.4) makes it slower to clear "free" space
+    GridGlobal/ProbHit: "0.75"   # Higher value (default 0.7) makes it faster to mark obstacles

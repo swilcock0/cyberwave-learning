@@ -15,18 +15,224 @@ import numpy as np
 import time
 import math
 import json
+import base64
+import datetime
+import re
+from cyberwave import Cyberwave
 
 # Import shared state/drawing functions from map_navigator
 from Intelligence.Map import map_navigator as mn
-
-# Import MQTT client for subscribing to hardware status
-import paho.mqtt.client as mqtt
 
 # Import Apriltag globals
 from Tutorials.CameraStream import ApriltagQuick as aq
 
 # Import AprilTag localizer
 from Project import apriltag_localizer as al
+
+
+HOME_POSITION = [-0.14500000000000002, -0.25, 0.0]
+# goto expects quaternion as [w, x, y, z]
+HOME_ROTATION_WXYZ = [0.9796574969515479, 0.0, 0.0, 0.20067682643152376]
+
+WORKFLOW_NAME = "VLA_CheckForHazards"
+WORKFLOW_MODEL = "waveshare/ugv-beast"
+HAZARD_PROMPT = (
+    "Look for trailing cables or wires lying across the floor. "
+    "Return ONLY strict JSON using this exact schema, no markdown or extra text."
+)
+HAZARD_SCHEMA_TEXT = (
+    '{"trailing_cables_found":false,'
+    '"region":"front|left|right|none",'
+    '"evidence":"string"}'
+)
+QUESTION_TAG_PROMPT = (
+    "This image has been pre-processed. Unknown AprilTag markers are highlighted with a yellow '?' label overlaid next to the black-and-white square tag. "
+    "Look for any square AprilTag marker that has a yellow '?' label beside it. "
+    "If found, identify the construction related(e.g. toolboxes) or construction material located near or attached to that marker. "
+    "Return exactly one raw JSON object and no extra prose, code fences, or markdown using this schema: "
+    '{"question_tag_found":false,"item":"string","material":"string","evidence":"string"}'
+)
+
+
+def _list_workflow_nodes(client, workflow_uuid: str):
+    api = client.api.api_client
+    param = api.param_serialize(
+        method="GET",
+        resource_path="/api/v1/workflows/{uuid}/nodes",
+        path_params={"uuid": workflow_uuid},
+        auth_settings=["CustomTokenAuthentication"],
+    )
+    response = api.call_api(*param)
+    response.read()
+    return api.response_deserialize(
+        response_data=response,
+        response_types_map={"200": "List[WorkflowNodeSchema]"},
+    ).data
+
+
+def _find_trigger_mission_node(nodes):
+    for node in nodes:
+        node_type = str(getattr(node, "node_type", "")).lower()
+        trigger_type = str(getattr(node, "trigger_type", "")).lower()
+        is_disabled = bool(getattr(node, "is_disabled", False))
+        if node_type == "trigger" and trigger_type == "manual" and not is_disabled:
+            return node
+    return None
+
+
+def _find_call_model_node(nodes):
+    for node in nodes:
+        node_type = str(getattr(node, "node_type", "")).lower()
+        is_disabled = bool(getattr(node, "is_disabled", False))
+        if is_disabled:
+            continue
+        if any(kw in node_type for kw in ("model", "action", "vla", "ai", "call")):
+            return node
+    return None
+
+
+def _get_node(client, workflow_uuid: str, node_uuid: str):
+    api = client.api.api_client
+    param = api.param_serialize(
+        method="GET",
+        resource_path="/api/v1/workflows/{uuid}/nodes/{node_uuid}",
+        path_params={"uuid": workflow_uuid, "node_uuid": node_uuid},
+        auth_settings=["CustomTokenAuthentication"],
+    )
+    response = api.call_api(*param)
+    response.read()
+    return api.response_deserialize(
+        response_data=response,
+        response_types_map={"200": "WorkflowNodeSchema"},
+    ).data
+
+
+def _patch_node_inputs(client, workflow_uuid: str, node_uuid: str, input_mappings: dict):
+    existing = _get_node(client, workflow_uuid, node_uuid)
+    existing_metadata = dict(getattr(existing, "metadata", None) or {})
+    existing_input_mappings = dict(existing_metadata.get("input_mappings", {}))
+    existing_input_mappings.update(input_mappings)
+    existing_metadata["input_mappings"] = existing_input_mappings
+
+    api = client.api.api_client
+    body = {"metadata": existing_metadata}
+    param = api.param_serialize(
+        method="PUT",
+        resource_path="/api/v1/workflows/{uuid}/nodes/{node_uuid}",
+        path_params={"uuid": workflow_uuid, "node_uuid": node_uuid},
+        body=body,
+        auth_settings=["CustomTokenAuthentication"],
+    )
+    response = api.call_api(*param)
+    response.read()
+    return api.response_deserialize(
+        response_data=response,
+        response_types_map={"200": "WorkflowNodeSchema"},
+    ).data
+
+
+def _trigger_workflow(client, workflow_uuid: str, trigger_node_uuid: str):
+    api = client.api.api_client
+    body = {"inputs": {"node_uuid": trigger_node_uuid}}
+    param = api.param_serialize(
+        method="POST",
+        resource_path="/api/v1/workflows/{uuid}/trigger",
+        path_params={"uuid": workflow_uuid},
+        body=body,
+        auth_settings=["CustomTokenAuthentication"],
+    )
+    response = api.call_api(*param)
+    response.read()
+    return api.response_deserialize(
+        response_data=response,
+        response_types_map={"200": "WorkflowRunSchema"},
+    ).data
+
+
+def _get_execution(client, workflow_uuid: str, execution_uuid: str):
+    api = client.api.api_client
+    param = api.param_serialize(
+        method="GET",
+        resource_path="/api/v1/workflows/{uuid}/executions/{execution_uuid}",
+        path_params={"uuid": workflow_uuid, "execution_uuid": execution_uuid},
+        auth_settings=["CustomTokenAuthentication"],
+    )
+    response = api.call_api(*param)
+    response.read()
+    return api.response_deserialize(
+        response_data=response,
+        response_types_map={"200": "WorkflowExecutionSchema"},
+    ).data
+
+
+def _wait_for_execution(client, workflow_uuid: str, run_uuid: str, timeout: float = 120.0):
+    terminal = {"success", "error", "canceled", "failed", "completed"}
+    deadline = time.monotonic() + timeout
+    while True:
+        execution = _get_execution(client, workflow_uuid, run_uuid)
+        status = str(getattr(execution, "status", "")).lower()
+        if status in terminal:
+            return execution
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"Execution {run_uuid} timed out")
+        time.sleep(min(2.0, remaining))
+
+
+def _extract_text_from_output_item(item):
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        preferred_keys = [
+            "model_result",
+            "result",
+            "response",
+            "output",
+            "content",
+            "answer",
+            "text",
+            "Result",
+        ]
+        for key in preferred_keys:
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+        for value in item.values():
+            nested = _extract_text_from_output_item(value)
+            if nested:
+                return nested
+    if isinstance(item, list):
+        for value in item:
+            nested = _extract_text_from_output_item(value)
+            if nested:
+                return nested
+    return None
+
+
+def _extract_json_from_text(text: str):
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    # Prefer fenced JSON blocks if present.
+    fenced = re.search(r"```json\s*([\s\S]*?)\s*```", text, flags=re.IGNORECASE)
+    if fenced:
+        try:
+            return json.loads(fenced.group(1))
+        except Exception:
+            pass
+
+    # Fallback: extract first object-like block (non-greedy).
+    match = re.search(r"\{[\s\S]*?\}", text)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except Exception:
+            return None
+    return None
 
 class DisplaySystem(ctk.CTk):
     def __init__(self):
@@ -173,6 +379,7 @@ class DisplaySystem(ctk.CTk):
         self.terminal.grid(row=2, column=0, padx=10, pady=10, sticky="nsew")
         self.terminal.insert("0.0", "System Initialized. Connected to UGV.\n")
         self.terminal.configure(state="disabled")
+        self._init_terminal_tags()
 
         # ---- RIGHT PANEL (Map Navigator) ----
         self.right_frame = ctk.CTkFrame(self, width=ideal_map_w)
@@ -183,6 +390,7 @@ class DisplaySystem(ctk.CTk):
 
         self.map_label = ctk.CTkLabel(self.right_frame, text="Loading Map...")
         self.map_label.grid(row=0, column=0, padx=10, pady=10) # Removed sticky="nsew" so it equals image size
+        self._create_map_overlay_buttons()
         
         # Map Mouse Drag Binding
         self.map_label.bind("<ButtonPress-1>", self.on_map_press)
@@ -198,6 +406,9 @@ class DisplaySystem(ctk.CTk):
         self.actual_pan_rad = 0.0
         self.actual_tilt_rad = 0.0
         self.last_camera_cmd_time = 0.0
+        self.workflow_client = None
+        self._pending_joint_ui = None
+        self._joint_ui_lock = threading.Lock()
         
         # Initialize MQTT subscription using SDK's authenticated client
         self._setup_mqtt_subscription()
@@ -208,6 +419,59 @@ class DisplaySystem(ctk.CTk):
         # We rely on their background threads doing the updates, we just loop for UI drawing
         self.update_camera_direction()  # Initialize camera direction display
         self.update_views()
+
+    def _init_terminal_tags(self):
+        textbox = getattr(self.terminal, "_textbox", None)
+        if textbox is None:
+            return
+        textbox.tag_config("query", foreground="#66d9ef")
+        textbox.tag_config("cloud", foreground="#ffd866")
+        textbox.tag_config("system", foreground="#a6e22e")
+        textbox.tag_config("warn", foreground="#ff6188")
+
+    def _terminal_log(self, channel: str, message: str):
+        if threading.current_thread() is not threading.main_thread():
+            self.after(0, lambda: self._terminal_log(channel, message))
+            return
+        tag_map = {
+            "QUERY": "query",
+            "CLOUD": "cloud",
+            "SYSTEM": "system",
+            "WARN": "warn",
+        }
+        prefix = f"[{channel}] "
+        line = f"{prefix}{message}\n"
+        self.terminal.configure(state="normal")
+        textbox = getattr(self.terminal, "_textbox", None)
+        if textbox is not None:
+            textbox.insert("end", line, tag_map.get(channel, "system"))
+        else:
+            self.terminal.insert("end", line)
+        self.terminal.see("end")
+        self.terminal.configure(state="disabled")
+
+    def _create_map_overlay_buttons(self):
+        self.hazard_button = ctk.CTkButton(
+            self.right_frame,
+            text="VLA Hazard Sweep",
+            command=self.on_vla_hazard_click,
+            fg_color="#1f6aa5",
+            hover_color="#2a83c4",
+            width=220,
+            height=38,
+        )
+        self.hazard_button.place(relx=0.98, rely=0.97, anchor="se")
+
+        self.question_tag_button = ctk.CTkButton(
+            self.right_frame,
+            text="Find ? Tag Item",
+            command=self.on_vla_question_tag_click,
+            fg_color="#7a3ea1",
+            hover_color="#9652bf",
+            width=220,
+            height=38,
+        )
+        self.question_tag_button.place(relx=0.98, rely=0.915, anchor="se")
 
     def _setup_mqtt_subscription(self):
         """Setup MQTT subscriptions using the SDK's authenticated client"""
@@ -278,9 +542,10 @@ class DisplaySystem(ctk.CTk):
                 # Update map rendering with the camera's pan angle (inverted to match map coordinates)
                 with mn._robot_lock:
                     mn._robot["camera_yaw"] = -self.actual_pan_rad
-                
-                # Queue UI update on main thread - update sliders AND direction
-                self.after(0, lambda pd=pan_deg, td=tilt_deg: self._update_camera_sliders_from_hardware(pd, td))
+
+                # Queue UI update payload; apply from main thread in update_views.
+                with self._joint_ui_lock:
+                    self._pending_joint_ui = (pan_deg, tilt_deg)
         except Exception as e:
             print(f"[Joints] Error processing joint state: {e}")
 
@@ -537,6 +802,15 @@ class DisplaySystem(ctk.CTk):
         """Update all display elements"""
         # Update hardware status displays
         self._update_hardware_status_display()
+
+        # Apply pending joint-driven slider updates on the Tk main thread.
+        pending = None
+        with self._joint_ui_lock:
+            if self._pending_joint_ui is not None:
+                pending = self._pending_joint_ui
+                self._pending_joint_ui = None
+        if pending is not None:
+            self._update_camera_sliders_from_hardware(*pending)
         
         # Frame skip for camera processing to improve UI performance
         if not hasattr(self, '_cam_process_count'):
@@ -591,11 +865,42 @@ class DisplaySystem(ctk.CTk):
                                 
                                 # Draw tag numbers in white
                                 for i in range(len(ids)):
+                                    tag_id = int(ids[i][0])
+                                    known_tag = next((t for t in mn.APRILTAG_MARKERS if t.get("id") == tag_id), None)
+                                    tag_label = str(tag_id) if known_tag else "?"
                                     corners_pts = corners[i][0].astype(int)
                                     center_x = int(np.mean(corners_pts[:, 0])+20)
                                     center_y = int(np.mean(corners_pts[:, 1]))
-                                    cv2.putText(display_img, str(ids[i][0]), (center_x - 10, center_y + 5),
-                                               cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                                    if known_tag:
+                                        cv2.putText(display_img, tag_label, (center_x - 10, center_y + 5),
+                                                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                                    else:
+                                        # Unknown tags: draw '?' offset to the right with a filled background.
+                                        side_x = int(np.max(corners_pts[:, 0])) + 14
+                                        side_y = int(np.mean(corners_pts[:, 1]))
+                                        font = cv2.FONT_HERSHEY_SIMPLEX
+                                        scale = 0.9
+                                        thickness = 2
+                                        (tw, th), baseline = cv2.getTextSize(tag_label, font, scale, thickness)
+                                        text_x = side_x
+                                        text_y = side_y + th // 2
+
+                                        pad = 5
+                                        rect_x1 = text_x - pad
+                                        rect_y1 = text_y - th - pad
+                                        rect_x2 = text_x + tw + pad
+                                        rect_y2 = text_y + baseline + pad
+
+                                        # Clamp background box to image bounds.
+                                        h_img, w_img = display_img.shape[:2]
+                                        rect_x1 = max(0, min(rect_x1, w_img - 1))
+                                        rect_y1 = max(0, min(rect_y1, h_img - 1))
+                                        rect_x2 = max(0, min(rect_x2, w_img - 1))
+                                        rect_y2 = max(0, min(rect_y2, h_img - 1))
+
+                                        cv2.rectangle(display_img, (rect_x1, rect_y1), (rect_x2, rect_y2), (20, 20, 20), -1)
+                                        cv2.rectangle(display_img, (rect_x1, rect_y1), (rect_x2, rect_y2), (255, 255, 255), 1)
+                                        cv2.putText(display_img, tag_label, (text_x, text_y), font, scale, (0, 220, 255), thickness, cv2.LINE_AA)
                                 
                                 h, w = display_img.shape[:2]
                                 fov_degrees = 118.0
@@ -661,7 +966,7 @@ class DisplaySystem(ctk.CTk):
                                                     topic = f"cyberwave/twin/{mn.TWIN_UUID}/navigate/initialpose"
                                                     client = mn.ugv.client
                                                     if client and hasattr(client, 'mqtt'):
-                                                        client.mqtt.publish(topic, json.dumps(payload))
+                                                        # client.mqtt.publish(topic, json.dumps(payload))
                                                         log_msg1 = f"[AprilTag] Auto-localization via tag {tag_id} (Dist: {dist:.2f}m)."
                                                         log_msg2 = f"         → InitialPose sent: api_x={api_x:+.2f}, api_y={api_y:+.2f}, yaw={math.degrees(api_yaw):+.1f}°"
                                                         print(log_msg1)
@@ -687,13 +992,20 @@ class DisplaySystem(ctk.CTk):
                     max_h = self.left_frame.winfo_height() * 0.65 - 20 # Allow camera up to 65% of height
                     if lbl_w < 10 or max_h < 10:
                         lbl_w, max_h = 400, 300
-                    
+
+                    # Flash stitched panorama for 2 seconds after hazard sweep.
+                    flash_pil = getattr(self, '_flash_pil', None)
+                    flash_until = getattr(self, '_flash_until', 0.0)
+                    display_pil = flash_pil if (flash_pil is not None and time.monotonic() < flash_until) else self._last_cam_frame_pil
+                    if display_pil is self._last_cam_frame_pil:
+                        self._flash_pil = None  # Clear once expired
+
                     # maintain aspect ratio for camera
-                    cam_h, cam_w = self._last_cam_shape
+                    cam_h, cam_w = display_pil.size[1], display_pil.size[0]
                     cam_scale = min(lbl_w / cam_w, max_h / cam_h)
                     cam_new_w, cam_new_h = int(cam_w * cam_scale), int(cam_h * cam_scale)
-                    
-                    ctk_img = ctk.CTkImage(light_image=self._last_cam_frame_pil, dark_image=self._last_cam_frame_pil, size=(max(1, cam_new_w), max(1, cam_new_h)))
+
+                    ctk_img = ctk.CTkImage(light_image=display_pil, dark_image=display_pil, size=(max(1, cam_new_w), max(1, cam_new_h)))
                     self.apriltag_label.configure(image=ctk_img, text="")
 
             # Update Map Navigator view using its own drawing functions
@@ -744,7 +1056,7 @@ class DisplaySystem(ctk.CTk):
 
                 ctk_img = ctk.CTkImage(light_image=self._last_map_pil, dark_image=self._last_map_pil, size=(new_w, new_h))
                 self.map_label.configure(image=ctk_img, text="")
-        except Exception as e:
+        except Exception:
             import traceback
             traceback.print_exc()
 
@@ -779,6 +1091,241 @@ class DisplaySystem(ctk.CTk):
         elif char == 's':
             resp = mn.ugv.navigation.stop(source_type="tele")
             print(f"→ stop  |  resp: {resp}")
+        elif char == 'h':
+            self.return_to_home()
+
+    def return_to_home(self):
+        """Send the robot to the fixed home pose using navigation.goto."""
+        try:
+            resp = mn.ugv.navigation.goto(
+                HOME_POSITION,
+                rotation=HOME_ROTATION_WXYZ,
+                source_type="tele",
+            )
+            log_msg = (
+                "[RTH] goto home sent: "
+                f"pos=({HOME_POSITION[0]:+.3f}, {HOME_POSITION[1]:+.3f}, {HOME_POSITION[2]:+.3f}) "
+                f"rot_wxyz=({HOME_ROTATION_WXYZ[0]:+.6f}, {HOME_ROTATION_WXYZ[1]:+.6f}, "
+                f"{HOME_ROTATION_WXYZ[2]:+.6f}, {HOME_ROTATION_WXYZ[3]:+.6f})"
+            )
+            print(log_msg)
+            print(f"[RTH] response: {resp}")
+            self.terminal.configure(state="normal")
+            self.terminal.insert("end", f"> {log_msg}\n")
+            self.terminal.insert("end", f"> [RTH] response: {resp}\n")
+            self.terminal.see("end")
+            self.terminal.configure(state="disabled")
+        except Exception as e:
+            err = f"[RTH] Failed to send home goto: {e}"
+            print(err)
+            self.terminal.configure(state="normal")
+            self.terminal.insert("end", f"> {err}\n")
+            self.terminal.see("end")
+            self.terminal.configure(state="disabled")
+
+    def on_vla_hazard_click(self):
+        threading.Thread(target=self._run_vla_hazard_sweep, daemon=True).start()
+
+    def on_vla_question_tag_click(self):
+        threading.Thread(target=self._run_vla_question_tag_check, daemon=True).start()
+
+    def _get_workflow_client(self):
+        if self.workflow_client is None:
+            self.workflow_client = Cyberwave()
+            self.workflow_client.affect("live")
+        return self.workflow_client
+
+    def _capture_latest_frame(self, timeout_s: float = 4.0):
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            raw = aq.latest_frame.get("bytes")
+            if raw and len(raw) > 200:
+                return bytes(raw)
+            time.sleep(0.1)
+        return None
+
+    def _capture_after_pan(self, pan_deg: int, settle_s: float, label: str):
+        self.send_camera_command(pan_deg, 0)
+        time.sleep(0.35)
+        self.send_camera_command(pan_deg, 0)
+        self._terminal_log("SYSTEM", f"Camera pan set to {pan_deg} deg for {label} view")
+        time.sleep(settle_s)
+        frame = self._capture_latest_frame(timeout_s=5.0)
+        if frame is None:
+            raise RuntimeError(f"Unable to capture {label} frame")
+        return frame
+
+    def _save_bytes_image(self, frame_bytes: bytes, stem: str):
+        out_dir = os.path.join(_THIS_DIR, "..", "captures")
+        os.makedirs(out_dir, exist_ok=True)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(out_dir, f"{ts}_{stem}.jpg")
+        with open(path, "wb") as fp:
+            fp.write(frame_bytes)
+        return path
+
+    def _stitch_views(self, left_bytes: bytes, center_bytes: bytes, right_bytes: bytes):
+        def _decode(b):
+            arr = np.frombuffer(b, dtype=np.uint8)
+            return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+        left = _decode(left_bytes)
+        center = _decode(center_bytes)
+        right = _decode(right_bytes)
+        if left is None or center is None or right is None:
+            raise RuntimeError("One or more camera images could not be decoded")
+
+        target_h = min(left.shape[0], center.shape[0], right.shape[0])
+
+        def _resize_to_h(img):
+            scale = target_h / img.shape[0]
+            return cv2.resize(img, (int(img.shape[1] * scale), target_h), interpolation=cv2.INTER_AREA)
+
+        stitched = cv2.hconcat([_resize_to_h(left), _resize_to_h(center), _resize_to_h(right)])
+        ok, encoded = cv2.imencode(".jpg", stitched, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+        if not ok:
+            raise RuntimeError("Failed to encode stitched panorama")
+        return encoded.tobytes()
+
+    def _run_vla_hazard_sweep(self):
+        try:
+            self._terminal_log("SYSTEM", "Starting hazard sweep workflow")
+            stop_resp = mn.ugv.navigation.stop(source_type="tele")
+            self._terminal_log("SYSTEM", f"Robot stop sent: {stop_resp}")
+
+            # Capture in left-center-right order with longer settle and duplicated commands.
+            left = self._capture_after_pan(-55, settle_s=6.0, label="left")
+            left_path = self._save_bytes_image(left, "left")
+            self._terminal_log("SYSTEM", f"Left frame saved: {left_path}")
+
+            center = self._capture_after_pan(0, settle_s=6.0, label="center")
+            center_path = self._save_bytes_image(center, "center")
+            self._terminal_log("SYSTEM", f"Center frame saved: {center_path}")
+
+            right = self._capture_after_pan(55, settle_s=6.0, label="right")
+            right_path = self._save_bytes_image(right, "right")
+            self._terminal_log("SYSTEM", f"Right frame saved: {right_path}")
+
+            self.send_camera_command(0, 0)
+            time.sleep(0.35)
+            self.send_camera_command(0, 0)
+            pano = self._stitch_views(left, center, right)
+            pano_path = self._save_bytes_image(pano, "stitched_panorama")
+            self._terminal_log("SYSTEM", f"Panorama saved: {pano_path}")
+
+            # Flash stitched panorama in the camera panel for 2 seconds.
+            arr = np.frombuffer(pano, dtype=np.uint8)
+            pano_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if pano_bgr is not None:
+                pano_rgb = cv2.cvtColor(pano_bgr, cv2.COLOR_BGR2RGB)
+                self._flash_pil = Image.fromarray(pano_rgb)
+                self._flash_until = time.monotonic() + 2.0
+
+            prompt = f"{HAZARD_PROMPT} {HAZARD_SCHEMA_TEXT}"
+            self._terminal_log("QUERY", prompt)
+
+            parsed, model_text = self._run_vla_query(prompt, pano)
+            self._terminal_log("CLOUD", model_text or "No model output")
+
+            if parsed is None:
+                self._terminal_log("WARN", "Model response is not valid JSON; skipping auto-return-home")
+                return
+
+            pretty = json.dumps(parsed, indent=2)
+            self._terminal_log("CLOUD", f"Parsed JSON:\n{pretty}")
+
+            trailing_cables_found = bool(parsed.get("trailing_cables_found", False))
+            region = str(parsed.get("region", "none")).strip()
+
+            if trailing_cables_found:
+                self._terminal_log("WARN", f"Trailing cables detected ({region}). Initiating return-to-home")
+                self.after(0, self.return_to_home)
+            else:
+                self._terminal_log("SYSTEM", "No trailing cables detected")
+        except Exception as exc:
+            self._terminal_log("WARN", f"Hazard sweep failed: {exc}")
+
+    def _run_vla_question_tag_check(self):
+        try:
+            # Use the processed frame (with ? overlay drawn) so the model can see the marker.
+            frame = None
+            pil_img = getattr(self, '_last_cam_frame_pil', None)
+            if pil_img is not None:
+                import io as _io
+                buf = _io.BytesIO()
+                pil_img.save(buf, format="JPEG", quality=90)
+                frame = buf.getvalue()
+            if frame is None:
+                frame = self._capture_latest_frame(timeout_s=5.0)
+            if frame is None:
+                raise RuntimeError("Unable to capture frame for question-tag search")
+
+            prompt = QUESTION_TAG_PROMPT
+            self._terminal_log("QUERY", prompt)
+
+            parsed, model_text = self._run_vla_query(prompt, frame)
+            self._terminal_log("CLOUD", model_text or "No model output")
+
+            if parsed is None:
+                self._terminal_log("WARN", "Could not parse JSON response for question-tag check")
+                return
+
+            found = bool(parsed.get("question_tag_found", False))
+            item = str(parsed.get("item", "")).strip()
+            material = str(parsed.get("material", "")).strip()
+
+            if found and (item or material):
+                self._terminal_log("SYSTEM", f"MATERIAL : [{material or item or 'unknown'}] FOUND")
+            else:
+                self._terminal_log("SYSTEM", "No item found")
+        except Exception as exc:
+            self._terminal_log("WARN", f"Question-tag check failed: {exc}")
+
+    def _run_vla_query(self, prompt: str, image_bytes: bytes):
+        cw_live = self._get_workflow_client()
+        workflows = cw_live.workflows.list()
+        workflow = next((wf for wf in workflows if wf.is_active and wf.name == WORKFLOW_NAME), None)
+        if workflow is None:
+            raise RuntimeError(f"Active workflow '{WORKFLOW_NAME}' not found")
+
+        nodes = _list_workflow_nodes(cw_live, workflow.uuid)
+        trigger_node = _find_trigger_mission_node(nodes)
+        model_node = _find_call_model_node(nodes)
+        if trigger_node is None or model_node is None:
+            raise RuntimeError("Missing trigger or model node in workflow")
+
+        image_value = "data:image/jpeg;base64," + base64.b64encode(image_bytes).decode("ascii")
+        model_inputs = {
+            "prompt": {"mode": "value", "value": prompt},
+            "text": {"mode": "value", "value": prompt},
+            "image_bytes": {"mode": "value", "value": image_value},
+            "image_url": {"mode": "value", "value": None},
+        }
+        _patch_node_inputs(cw_live, workflow.uuid, str(model_node.uuid), model_inputs)
+
+        run = _trigger_workflow(cw_live, workflow.uuid, str(trigger_node.uuid))
+        run_uuid = str(getattr(run, "execution_uuid", "") or getattr(run, "uuid", ""))
+        if not run_uuid:
+            raise RuntimeError("Workflow run did not return a UUID")
+
+        execution = _wait_for_execution(cw_live, workflow.uuid, run_uuid, timeout=120.0)
+        node_execs = getattr(execution, "node_executions", None) or []
+        model_node_exec = next(
+            (nx for nx in node_execs if str(getattr(nx, "node_uuid", "")) == str(model_node.uuid)),
+            None,
+        )
+
+        if model_node_exec is None:
+            raise RuntimeError("Model node execution not found")
+
+        output_data = getattr(model_node_exec, "output_data", []) or []
+        text_result = None
+        for item in output_data:
+            text_result = _extract_text_from_output_item(item)
+            if text_result:
+                break
+        parsed = _extract_json_from_text(text_result) if text_result else None
+        return parsed, (text_result or "")
 
     def on_map_press(self, event):
         mx, my = self._get_map_coords(event.x, event.y)
@@ -796,6 +1343,11 @@ class DisplaySystem(ctk.CTk):
     def destroy(self):
         self.stop_event.set()
         aq.stop_event.set()
+        if self.workflow_client is not None:
+            try:
+                self.workflow_client.disconnect()
+            except Exception:
+                pass
         
         # Note: We don't disconnect the MQTT client as it's managed by the SDK
         # The SDK will handle cleanup
