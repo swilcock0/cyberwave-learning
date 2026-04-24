@@ -21,9 +21,13 @@ Integration: The system utilizes the Cyberwave SDK as a bridge between the Edge 
 
 Resources:
 GitHub Repo: [https://github.com/swilcock0/cyberwave-learning](https://github.com/swilcock0/cyberwave-learning)
+
 Project Planning Doc: https://github.com/swilcock0/cyberwave-learning/blob/main/HighLevelPlan.pdf
+
 D500 Lidar Driver Integration: https://github.com/swilcock0/cyberwave-edge-d500-lidar-driver
+
 Cyberwave SDK PR: https://github.com/cyberwave-os/cyberwave-edge-ros-ugv/pull/1
+
 MOAR UGV ADJUSTMENTS: https://github.com/swilcock0/cyberwave-edge-ros-ugv/
 Video: https://www.youtube.com/watch?v=A-wZtpicR24
 
