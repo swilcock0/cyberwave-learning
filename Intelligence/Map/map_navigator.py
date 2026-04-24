@@ -213,9 +213,9 @@ APRILTAG_MARKERS = [
     { #Shower
         "id": 3,
         "size_m": 0.2,  # 200mm
-        "x": 0.860,
-        "y": 1.175,
-        "heading_hint": {"dx": -64, "dy": 41},
+        "x": 0.02,
+        "y": 1.905,
+        "heading_hint": {"dx": -51, "dy": 38},
     },
     # Add more tags here as needed
 ]
@@ -595,8 +595,21 @@ def _draw_grid(frame: np.ndarray, step_m: float = 1.0):
 def _draw_robot(frame: np.ndarray):
     with _robot_lock:
         rx, ry, ryaw = _robot.get("x", 0.0), _robot.get("y", 0.0), _robot.get("yaw", 0.0)
+        camera_yaw = _robot.get("camera_yaw", None)
+        
     px, py = world_to_px(rx, ry)
     r = 10
+    
+    # Draw Camera field of view / orientation (orange arrow)
+    if camera_yaw is not None:
+        total_yaw = ryaw + camera_yaw
+        
+        # Camera arrow
+        cam_ex = int(px + r * 3.5 * math.sin(total_yaw))
+        cam_ey = int(py + r * 3.5 * math.cos(total_yaw))
+        # Draw camera direction (Orange)
+        cv2.arrowedLine(frame, (px, py), (cam_ex, cam_ey), (0, 165, 255), 2, tipLength=0.25)
+        
     cv2.circle(frame, (px, py), r, _COL_ROBOT, 2)
     # Heading arrow: world-yaw rotated 90° CW into image space
     # image-x ∝ world-y → sin(ryaw), image-y ∝ world-x (down+) → cos(ryaw)

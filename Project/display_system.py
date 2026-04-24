@@ -25,6 +25,9 @@ import paho.mqtt.client as mqtt
 # Import Apriltag globals
 from Tutorials.CameraStream import ApriltagQuick as aq
 
+# Import AprilTag localizer
+from Project import apriltag_localizer as al
+
 class DisplaySystem(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -272,9 +275,9 @@ class DisplaySystem(ctk.CTk):
                 pan_deg = math.degrees(self.actual_pan_rad)
                 tilt_deg = math.degrees(self.actual_tilt_rad)
                 
-                # Update map rendering with the camera's pan angle
+                # Update map rendering with the camera's pan angle (inverted to match map coordinates)
                 with mn._robot_lock:
-                    mn._robot["camera_yaw"] = self.actual_pan_rad
+                    mn._robot["camera_yaw"] = -self.actual_pan_rad
                 
                 # Queue UI update on main thread - update sliders AND direction
                 self.after(0, lambda pd=pan_deg, td=tilt_deg: self._update_camera_sliders_from_hardware(pd, td))
@@ -336,7 +339,7 @@ class DisplaySystem(ctk.CTk):
             client.mqtt.connect()
             client.mqtt.publish(topic, payload)
             self.terminal.configure(state="normal")
-            self.terminal.insert("end", f"> Command: Chassis Light {status} (awaiting hardware confirmation)\n")
+            self.terminal.insert("end", f"> Command: Chassis Light {status}\n")
             self.terminal.see("end")
             self.terminal.configure(state="disabled")
         except Exception as e:
@@ -367,7 +370,7 @@ class DisplaySystem(ctk.CTk):
             client.mqtt.connect()
             client.mqtt.publish(topic, payload)
             self.terminal.configure(state="normal")
-            self.terminal.insert("end", f"> Command: Camera Light {status} (awaiting hardware confirmation)\n")
+            self.terminal.insert("end", f"> Command: Camera Light {status}\n")
             self.terminal.see("end")
             self.terminal.configure(state="disabled")
         except Exception as e:
@@ -535,53 +538,150 @@ class DisplaySystem(ctk.CTk):
         # Update hardware status displays
         self._update_hardware_status_display()
         
+        # Frame skip for camera processing to improve UI performance
+        if not hasattr(self, '_cam_process_count'):
+            self._cam_process_count = 0
+            self._last_cam_frame_pil = None
+            self._last_cam_bytes = None
+            
         try:
             # Update ApriltagQuick view using exact drawing logic adapted
             raw_bytes = aq.latest_frame["bytes"]
             if raw_bytes:
-                arr = np.frombuffer(raw_bytes, dtype=np.uint8)
-                img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                if img is not None:
-                    # Basic display for the dashboard
-                    display_img = img.copy()
-                    if aq.cv2 is not None and getattr(aq, 'aruco_dict', None) is not None:
-                        gray = cv2.cvtColor(display_img, cv2.COLOR_BGR2GRAY)
-                        
-                        # Dynamic Brightness: Fixes tags washing out when the physical LED is ON
-                        # Evaluate lighting based on the center of the image where the LED casts its beam
-                        h, w = gray.shape
-                        crop_y, crop_x = h // 4, w // 4
-                        center_roi = gray[crop_y : h - crop_y, crop_x : w - crop_x]
-                        center_brightness = cv2.mean(center_roi)[0]
-                        
-                        if center_brightness < 90:
-                            # Dark (LED OFF): brighten midtones using Gamma Correction (gamma = 1.5)
-                            table = np.array([((i / 255.0) ** (1.0 / 1.5)) * 255 for i in np.arange(0, 256)]).astype("uint8")
-                            gray_adj = cv2.LUT(gray, table)
-                        elif center_brightness > 150:
-                            # Washed out (LED ON): heavily darken midtones to pull detail out of the glare (gamma = 0.3)
-                            table = np.array([((i / 255.0) ** (1.0 / 0.3)) * 255 for i in np.arange(0, 256)]).astype("uint8")
-                            gray_adj = cv2.LUT(gray, table)
-                        else:
-                            # Normal lighting
-                            gray_adj = gray
-                        
-                        # Apply light CLAHE for local contrast balancing
-                        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
-                        processed_gray = clahe.apply(gray_adj)
-                        
-                        if getattr(aq, 'aruco_detector', None) is not None:
-                            corners, ids, rejected = aq.aruco_detector.detectMarkers(processed_gray)
-                        else:
-                            corners, ids, rejected = cv2.aruco.detectMarkers(processed_gray, aq.aruco_dict, parameters=aq.aruco_params)
+                # Only process if we have new bytes AND it's the right frame in the sequence
+                # (Or if we haven't processed anything yet)
+                if raw_bytes != self._last_cam_bytes and (self._cam_process_count % 3 == 0 or self._last_cam_frame_pil is None):
+                    self._last_cam_bytes = raw_bytes
+                    arr = np.frombuffer(raw_bytes, dtype=np.uint8)
+                    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                    if img is not None:
+                        # Basic display for the dashboard
+                        display_img = img.copy()
+                        if aq.cv2 is not None and getattr(aq, 'aruco_dict', None) is not None:
+                            gray = cv2.cvtColor(display_img, cv2.COLOR_BGR2GRAY)
                             
-                        if ids is not None and len(ids) > 0:
-                            cv2.aruco.drawDetectedMarkers(display_img, corners)
+                            # Dynamic Brightness: Fixes tags washing out when the physical LED is ON
+                            h, w = gray.shape
+                            crop_y, crop_x = h // 4, w // 4
+                            center_roi = gray[crop_y : h - crop_y, crop_x : w - crop_x]
+                            center_brightness = cv2.mean(center_roi)[0]
+                            
+                            # Optimize: skip LUT if normal lighting
+                            if center_brightness < 90:
+                                table = np.array([((i / 255.0) ** (1.0 / 1.5)) * 255 for i in np.arange(0, 256)]).astype("uint8")
+                                processed_gray = cv2.LUT(gray, table)
+                            elif center_brightness > 150:
+                                table = np.array([((i / 255.0) ** (1.0 / 0.3)) * 255 for i in np.arange(0, 256)]).astype("uint8")
+                                processed_gray = cv2.LUT(gray, table)
+                            else:
+                                processed_gray = gray
+                            
+                            # Apply light CLAHE for local contrast balancing - moved inside since LUT isn't needed for normal
+                            if center_brightness < 90 or center_brightness > 150:
+                                clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+                                processed_gray = clahe.apply(processed_gray)
+                            
+                            if getattr(aq, 'aruco_detector', None) is not None:
+                                corners, ids, rejected = aq.aruco_detector.detectMarkers(processed_gray)
+                            else:
+                                corners, ids, rejected = cv2.aruco.detectMarkers(processed_gray, aq.aruco_dict, parameters=aq.aruco_params)
+                                
+                            if ids is not None and len(ids) > 0:
+                                cv2.aruco.drawDetectedMarkers(display_img, corners)
+                                
+                                # Draw tag numbers in white
+                                for i in range(len(ids)):
+                                    corners_pts = corners[i][0].astype(int)
+                                    center_x = int(np.mean(corners_pts[:, 0])+20)
+                                    center_y = int(np.mean(corners_pts[:, 1]))
+                                    cv2.putText(display_img, str(ids[i][0]), (center_x - 10, center_y + 5),
+                                               cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                                
+                                h, w = display_img.shape[:2]
+                                fov_degrees = 118.0
+                                fov_radians = math.radians(fov_degrees / 2.0)
+                                focal_length = (w / 2.0) / math.tan(fov_radians)
+                                center = (w / 2.0, h / 2.0)
+                                camera_matrix = np.array([
+                                    [focal_length, 0, center[0]],
+                                    [0, focal_length, center[1]],
+                                    [0, 0, 1]
+                                ], dtype=np.float32)
+                                
+                                tag_size = 0.2
+                                obj_pts = np.array([
+                                    [-tag_size/2,  tag_size/2, 0],
+                                    [ tag_size/2,  tag_size/2, 0],
+                                    [ tag_size/2, -tag_size/2, 0],
+                                    [-tag_size/2, -tag_size/2, 0]
+                                ], dtype=np.float32)
+                                
+                                zero_dist = np.zeros((4, 1), dtype=np.float32)
+                                
+                                if not hasattr(self, 'tag_last_tagged'):
+                                    self.tag_last_tagged = {}
+                                    
+                                for i in range(len(ids)):
+                                    tag_id = int(ids[i][0])
+                                    now = time.time()
+                                    last_tagged = self.tag_last_tagged.get(tag_id, 0.0)
+                                    
+                                    # Only calculate pose and trigger initial pose if 10 seconds have passed
+                                    if now - last_tagged > 10.0:
+                                        self.tag_last_tagged[tag_id] = now
+                                        
+                                        success, rvec, tvec = cv2.solvePnP(obj_pts, corners[i][0], camera_matrix, zero_dist)
+                                        if success:
+                                            axis_length = tag_size / 2
+                                            axis_points_3d = np.array([
+                                                [0, 0, 0], [axis_length, 0, 0], [0, axis_length, 0]
+                                            ], dtype=np.float32)
+                                            axis_points_2d, _ = cv2.projectPoints(axis_points_3d, rvec, tvec, camera_matrix, zero_dist)
+                                            axis_points_2d = axis_points_2d.astype(int)
+                                            
+                                            origin = tuple(axis_points_2d[0][0])
+                                            x_end = tuple(axis_points_2d[1][0])
+                                            y_end = tuple(axis_points_2d[2][0])
+                                            cv2.line(display_img, origin, x_end, (0, 0, 255), 2)
+                                            cv2.line(display_img, origin, y_end, (0, 255, 0), 2)
+                                            
+                                            dist = np.linalg.norm(tvec)
+                                            cv2.putText(display_img, f"Dist: {dist:.2f}m", 
+                                                        (int(corners[i][0][0][0]), int(corners[i][0][0][1]) - 10), 
+                                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                                                        
+                                            known_tag = next((t for t in mn.APRILTAG_MARKERS if t.get("id") == tag_id), None)
+                                            if known_tag:
+                                                try:
+                                                    payload, api_x, api_y, api_yaw = al.localise_from_tag(
+                                                        rvec, tvec, known_tag,
+                                                        pan_rad=self.actual_pan_rad,
+                                                        debug=True,
+                                                    )
+                                                    topic = f"cyberwave/twin/{mn.TWIN_UUID}/navigate/initialpose"
+                                                    client = mn.ugv.client
+                                                    if client and hasattr(client, 'mqtt'):
+                                                        client.mqtt.publish(topic, json.dumps(payload))
+                                                        log_msg1 = f"[AprilTag] Auto-localization via tag {tag_id} (Dist: {dist:.2f}m)."
+                                                        log_msg2 = f"         → InitialPose sent: api_x={api_x:+.2f}, api_y={api_y:+.2f}, yaw={math.degrees(api_yaw):+.1f}°"
+                                                        print(log_msg1)
+                                                        print(log_msg2)
+                                                        self.terminal.configure(state="normal")
+                                                        self.terminal.insert("end", f"> {log_msg1}\n> {log_msg2}\n")
+                                                        self.terminal.see("end")
+                                                        self.terminal.configure(state="disabled")
+                                                except Exception as e:
+                                                    print(f"Error publishing initialpose from tag: {e}")
 
-                    # Resize to fit frame constraint nicely
-                    frame_rgb = cv2.cvtColor(display_img, cv2.COLOR_BGR2RGB)
-                    img_pil = Image.fromarray(frame_rgb)
-                    
+                        # Resize to fit frame constraint nicely
+                        frame_rgb = cv2.cvtColor(display_img, cv2.COLOR_BGR2RGB)
+                        self._last_cam_frame_pil = Image.fromarray(frame_rgb)
+                        self._last_cam_shape = img.shape[:2]
+                
+                self._cam_process_count += 1
+                
+                # Apply the current or cached image to the UI (so UI still gets resized correctly if window size changes without recalculating CV maths)
+                if self._last_cam_frame_pil is not None:
                     # Available space is defined by the left frame itself now, not the label
                     lbl_w = self.left_frame.winfo_width() - 20
                     max_h = self.left_frame.winfo_height() * 0.65 - 20 # Allow camera up to 65% of height
@@ -589,49 +689,61 @@ class DisplaySystem(ctk.CTk):
                         lbl_w, max_h = 400, 300
                     
                     # maintain aspect ratio for camera
-                    cam_h, cam_w = img.shape[:2]
+                    cam_h, cam_w = self._last_cam_shape
                     cam_scale = min(lbl_w / cam_w, max_h / cam_h)
                     cam_new_w, cam_new_h = int(cam_w * cam_scale), int(cam_h * cam_scale)
                     
-                    ctk_img = ctk.CTkImage(light_image=img_pil, dark_image=img_pil, size=(max(1, cam_new_w), max(1, cam_new_h)))
+                    ctk_img = ctk.CTkImage(light_image=self._last_cam_frame_pil, dark_image=self._last_cam_frame_pil, size=(max(1, cam_new_w), max(1, cam_new_h)))
                     self.apriltag_label.configure(image=ctk_img, text="")
 
             # Update Map Navigator view using its own drawing functions
-            frame = cv2.resize(mn._BASE_IMG, (mn.DISP_W, mn.DISP_H), interpolation=cv2.INTER_NEAREST)
-            mn._draw_grid(frame)
-            
-            with mn._robot_lock:
-                rx, ry = mn._robot["x"], mn._robot["y"]
-            mn._current_zone = mn._check_zone(rx, ry)
-            if mn._current_zone is not None:
-                mn._draw_zone_mask(frame, mn._current_zone)
-            
-            mn._draw_last_goal(frame)
-            mn._draw_drag_arrow(frame)
-            mn._draw_lidar_scan(frame)
-            mn._draw_apriltags(frame)
-            mn._draw_robot(frame)
-            mn._draw_logo(frame)
-            mn._draw_hud(frame)
+            if not hasattr(self, '_map_process_count'):
+                self._map_process_count = 0
+                self._last_map_pil = None
+                self._last_map_shape = None
+                
+            # Update map 10 times a second max (every 2nd tick at 50ms)
+            if self._map_process_count % 2 == 0 or self._last_map_pil is None:
+                frame = cv2.resize(mn._BASE_IMG, (mn.DISP_W, mn.DISP_H), interpolation=cv2.INTER_NEAREST)
+                mn._draw_grid(frame)
+                
+                with mn._robot_lock:
+                    rx, ry = mn._robot["x"], mn._robot["y"]
+                mn._current_zone = mn._check_zone(rx, ry)
+                if mn._current_zone is not None:
+                    mn._draw_zone_mask(frame, mn._current_zone)
+                
+                mn._draw_last_goal(frame)
+                mn._draw_drag_arrow(frame)
+                mn._draw_lidar_scan(frame)
+                mn._draw_apriltags(frame)
+                mn._draw_robot(frame)
+                mn._draw_logo(frame)
+                mn._draw_hud(frame)
 
-            # Preserve ratio to prevent coordinate stretching
-            # Determine actual display size dynamically based on UI right_frame
-            lbl_w = self.right_frame.winfo_width() - 20
-            lbl_h = self.right_frame.winfo_height() - 20
-            if lbl_w < 10 or lbl_h < 10:
-                lbl_w, lbl_h = 800, 800
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                self._last_map_pil = Image.fromarray(frame_rgb)
+                self._last_map_shape = frame.shape[:2]
+                
+            self._map_process_count += 1
 
-            mh, mw = frame.shape[:2]
-            scale = min(lbl_w / mw, lbl_h / mh)
-            new_w, new_h = max(1, int(mw * scale)), max(1, int(mh * scale))
-            
-            self.map_disp_w = new_w
-            self.map_disp_h = new_h
+            if self._last_map_pil is not None:
+                # Preserve ratio to prevent coordinate stretching
+                # Determine actual display size dynamically based on UI right_frame
+                lbl_w = self.right_frame.winfo_width() - 20
+                lbl_h = self.right_frame.winfo_height() - 20
+                if lbl_w < 10 or lbl_h < 10:
+                    lbl_w, lbl_h = 800, 800
 
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            img_pil = Image.fromarray(frame_rgb)
-            ctk_img = ctk.CTkImage(light_image=img_pil, dark_image=img_pil, size=(new_w, new_h))
-            self.map_label.configure(image=ctk_img, text="")
+                mh, mw = self._last_map_shape
+                scale = min(lbl_w / mw, lbl_h / mh)
+                new_w, new_h = max(1, int(mw * scale)), max(1, int(mh * scale))
+                
+                self.map_disp_w = new_w
+                self.map_disp_h = new_h
+
+                ctk_img = ctk.CTkImage(light_image=self._last_map_pil, dark_image=self._last_map_pil, size=(new_w, new_h))
+                self.map_label.configure(image=ctk_img, text="")
         except Exception as e:
             import traceback
             traceback.print_exc()
